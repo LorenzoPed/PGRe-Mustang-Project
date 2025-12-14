@@ -1,0 +1,14 @@
+# Cartelle delle librerie
+SDL/
+geGL-master/
+extern/
+lib/
+
+# File di compilazione (Visual Studio / GCC)
+bin/
+obj/
+*.exe
+*.o
+.vs/
+out/
+build/
