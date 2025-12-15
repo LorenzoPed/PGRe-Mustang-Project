@@ -10,7 +10,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
-#include <algorithm> // Serve per trasformare stringhe in lowercase
+#include <algorithm>
 #include <stb_image.h>
 
 #include <glm/glm.hpp>
@@ -56,6 +56,50 @@ struct LogicalObject
   float minTime = 0.0f;              // Tempo INIZIO animazione (es. 2083 per porta DX)
   float maxTime = 0.0f;
 };
+
+float skyboxVertices[] = {
+    // positions
+    -1.0f, 1.0f, -1.0f,
+    -1.0f, -1.0f, -1.0f,
+    1.0f, -1.0f, -1.0f,
+    1.0f, -1.0f, -1.0f,
+    1.0f, 1.0f, -1.0f,
+    -1.0f, 1.0f, -1.0f,
+
+    -1.0f, -1.0f, 1.0f,
+    -1.0f, -1.0f, -1.0f,
+    -1.0f, 1.0f, -1.0f,
+    -1.0f, 1.0f, -1.0f,
+    -1.0f, 1.0f, 1.0f,
+    -1.0f, -1.0f, 1.0f,
+
+    1.0f, -1.0f, -1.0f,
+    1.0f, -1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, -1.0f,
+    1.0f, -1.0f, -1.0f,
+
+    -1.0f, -1.0f, 1.0f,
+    -1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f,
+    1.0f, -1.0f, 1.0f,
+    -1.0f, -1.0f, 1.0f,
+
+    -1.0f, 1.0f, -1.0f,
+    1.0f, 1.0f, -1.0f,
+    1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f,
+    -1.0f, 1.0f, 1.0f,
+    -1.0f, 1.0f, -1.0f,
+
+    -1.0f, -1.0f, -1.0f,
+    -1.0f, -1.0f, 1.0f,
+    1.0f, -1.0f, -1.0f,
+    1.0f, -1.0f, -1.0f,
+    -1.0f, -1.0f, 1.0f,
+    1.0f, -1.0f, 1.0f};
 
 std::vector<LogicalObject> carObjects;
 Assimp::Importer importer;
@@ -420,7 +464,7 @@ bool loadCarModel(const std::string &path)
   }
 
   // Debug info
-  std::cout << "--- DEBUG GLB --- Animazioni: " << g_scene->mNumAnimations << std::endl;
+  std::cout << "--- DEBUG GLB ---" << g_scene->mNumAnimations << std::endl;
 
   carObjects.clear();
   processNode(g_scene->mRootNode, g_scene);
@@ -552,6 +596,41 @@ int main(int argc, char *argv[])
   }
   ).";
 
+  // --- SHADER SKYBOX ---
+  auto skyboxVsSrc = R".(
+  #version 410
+  layout (location = 0) in vec3 aPos;
+  out vec3 TexCoords;
+  uniform mat4 projection;
+  uniform mat4 view;
+  void main()
+  {
+      TexCoords = aPos;
+      vec4 pos = projection * view * vec4(aPos, 1.0);
+      // Trucco per massimizzare la profondità (z=w -> z/w = 1.0)
+      gl_Position = pos.xyww;
+  }  
+  ).";
+
+  auto skyboxFsSrc = R".(
+  #version 410
+  out vec4 FragColor;
+  in vec3 TexCoords;
+  uniform samplerCube skybox;
+  void main()
+  {    
+      FragColor = texture(skybox, TexCoords);
+  }
+  ).";
+
+  auto skyboxVS = createShader(GL_VERTEX_SHADER, skyboxVsSrc);
+  auto skyboxFS = createShader(GL_FRAGMENT_SHADER, skyboxFsSrc);
+  auto skyboxProgram = createProgram({skyboxVS, skyboxFS});
+
+  auto skyProjL = glGetUniformLocation(skyboxProgram, "projection");
+  auto skyViewL = glGetUniformLocation(skyboxProgram, "view");
+  auto skyTexL = glGetUniformLocation(skyboxProgram, "skybox");
+
   auto vs = createShader(GL_VERTEX_SHADER, vsSrc);
   auto fs = createShader(GL_FRAGMENT_SHADER, fsSrc);
   auto prg = createProgram({vs, fs});
@@ -565,6 +644,16 @@ int main(int argc, char *argv[])
   auto specularStrengthL = glGetUniformLocation(prg, "specularStrength");
   auto viewPosL = glGetUniformLocation(prg, "viewPos");
   auto skyboxL = glGetUniformLocation(prg, "skybox");
+
+  // cube map (skybox)
+  GLuint skyboxVAO, skyboxVBO;
+  glGenVertexArrays(1, &skyboxVAO);
+  glGenBuffers(1, &skyboxVBO);
+  glBindVertexArray(skyboxVAO);
+  glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), &skyboxVertices, GL_STATIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
 
   std::vector<std::string> faces = {"../model/skybox/right.jpg", "../model/skybox/left.jpg", "../model/skybox/top.jpg", "../model/skybox/bottom.jpg", "../model/skybox/front.jpg", "../model/skybox/back.jpg"};
   GLuint cubemapTexture = loadCubemap(faces);
@@ -688,6 +777,30 @@ int main(int argc, char *argv[])
         glDrawElements(GL_TRIANGLES, part.indexCount, GL_UNSIGNED_INT, nullptr);
       }
     }
+
+    // render skybox last
+    // Cambiamo la funzione depth per disegnare lo sfondo "dietro" tutto il resto
+    glDepthFunc(GL_LEQUAL);
+    glUseProgram(skyboxProgram);
+
+    // Rimuoviamo la traslazione dalla view matrix (lo skybox non si muove, ruota solo)
+    glm::mat4 viewNoTrans = glm::mat4(glm::mat3(viewMatrix));
+
+    glUniformMatrix4fv(skyViewL, 1, GL_FALSE, glm::value_ptr(viewNoTrans));
+    glUniformMatrix4fv(skyProjL, 1, GL_FALSE, glm::value_ptr(projMatrix));
+
+    // Leghiamo la stessa cubemap che usi per i riflessi
+    glBindVertexArray(skyboxVAO);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+    glUniform1i(skyTexL, 0);
+
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    glBindVertexArray(0);
+
+    // Ripristiniamo la depth function standard
+    glDepthFunc(GL_LESS);
+
     SDL_GL_SwapWindow(window);
   }
 
