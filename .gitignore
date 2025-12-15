@@ -2,7 +2,8 @@
 SDL/
 geGL-master/
 extern/
-libs/
+libs/*
+libs
 
 # File di compilazione (Visual Studio / GCC)
 bin/
@@ -12,3 +13,5 @@ obj/
 .vs/
 out/
 build/
+.DS_Store
+.vscode/

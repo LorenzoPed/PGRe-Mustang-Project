@@ -10,6 +10,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <stb_image.h>
 
 using namespace ge::gl;
 
@@ -18,13 +19,18 @@ struct MeshPart
   GLuint vao;
   GLuint vbo;
   GLuint ebo;
+  GLuint textureID;
   size_t indexCount;
+
+  float diffuseColor[4]; // RGBA
+  float specularStrength;
 };
 
 struct LogicalObject
 {
   std::string name;
   std::vector<MeshPart> parts;
+  float transform[16];
 };
 
 std::vector<LogicalObject> carObjects;
@@ -36,13 +42,36 @@ MeshPart loadMesh(aiMesh *mesh)
 
   for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
   {
+    // 1. Posizioni
     vertices.push_back(mesh->mVertices[v].x);
     vertices.push_back(mesh->mVertices[v].y);
     vertices.push_back(mesh->mVertices[v].z);
 
-    vertices.push_back(mesh->mNormals[v].x);
-    vertices.push_back(mesh->mNormals[v].y);
-    vertices.push_back(mesh->mNormals[v].z);
+    // 2. Normali
+    if (mesh->HasNormals())
+    {
+      vertices.push_back(mesh->mNormals[v].x);
+      vertices.push_back(mesh->mNormals[v].y);
+      vertices.push_back(mesh->mNormals[v].z);
+    }
+    else
+    {
+      vertices.push_back(0.0f);
+      vertices.push_back(0.0f);
+      vertices.push_back(0.0f);
+    }
+
+    // 3. Texture Coordinates (UV) - NUOVO!
+    if (mesh->mTextureCoords[0])
+    {
+      vertices.push_back(mesh->mTextureCoords[0][v].x);
+      vertices.push_back(mesh->mTextureCoords[0][v].y);
+    }
+    else
+    {
+      vertices.push_back(0.0f);
+      vertices.push_back(0.0f);
+    }
   }
 
   for (unsigned int f = 0; f < mesh->mNumFaces; ++f)
@@ -65,11 +94,19 @@ MeshPart loadMesh(aiMesh *mesh)
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, part.ebo);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
 
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)0);
+  int stride = 8 * sizeof(float);
 
+  // Positions (Location 0)
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void *)0);
+
+  // Normal (Location 1)
   glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(3 * sizeof(float)));
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void *)(3 * sizeof(float)));
+
+  // UV (Location 2)
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void *)(6 * sizeof(float)));
 
   glBindVertexArray(0);
 
@@ -78,15 +115,143 @@ MeshPart loadMesh(aiMesh *mesh)
   return part;
 }
 
+GLuint loadTexture(const aiMaterial *material, const aiScene *scene)
+{
+  aiString path;
+  // Cerca la texture "Base Color" o "Diffuse"
+  if (material->GetTexture(aiTextureType_BASE_COLOR, 0, &path) != AI_SUCCESS)
+  {
+    if (material->GetTexture(aiTextureType_DIFFUSE, 0, &path) != AI_SUCCESS)
+    {
+      return 0; // Nessuna texture trovata
+    }
+  }
+
+  // Controlla se è una texture embedded (inizia con *)
+  const aiTexture *embeddedTex = scene->GetEmbeddedTexture(path.C_Str());
+  unsigned char *data = nullptr;
+  int width, height, channels;
+  int len = 0;
+
+  if (embeddedTex)
+  {
+    // Texture compressa dentro il GLB (es. PNG/JPG)
+    if (embeddedTex->mHeight == 0)
+    {
+      data = stbi_load_from_memory(
+          reinterpret_cast<unsigned char *>(embeddedTex->pcData),
+          embeddedTex->mWidth,
+          &width, &height, &channels, 4);
+    }
+    else
+    {
+      // Texture raw (raro nei GLB compressi)
+      data = stbi_load_from_memory(
+          reinterpret_cast<unsigned char *>(embeddedTex->pcData),
+          embeddedTex->mWidth * embeddedTex->mHeight * 4,
+          &width, &height, &channels, 4);
+    }
+  }
+  else
+  {
+    // Se non è embedded, prova a caricarla da file esterno (fallback)
+    data = stbi_load(path.C_Str(), &width, &height, &channels, 4);
+  }
+
+  if (!data)
+  {
+    std::cerr << "Fallito caricamento texture: " << path.C_Str() << std::endl;
+    return 0;
+  }
+
+  GLuint texID;
+  glGenTextures(1, &texID);
+  glBindTexture(GL_TEXTURE_2D, texID);
+
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+  glGenerateMipmap(GL_TEXTURE_2D);
+
+  stbi_image_free(data);
+  return texID;
+}
+
 void processNode(aiNode *node, const aiScene *scene)
 {
   LogicalObject obj;
   obj.name = node->mName.C_Str();
+  aiMatrix4x4 m = node->mTransformation;
+
+  // Trasponi la matrice (da Row-Major di Assimp a Column-Major di OpenGL)
+  obj.transform[0] = m.a1;
+  obj.transform[1] = m.b1;
+  obj.transform[2] = m.c1;
+  obj.transform[3] = m.d1;
+  obj.transform[4] = m.a2;
+  obj.transform[5] = m.b2;
+  obj.transform[6] = m.c2;
+  obj.transform[7] = m.d2;
+  obj.transform[8] = m.a3;
+  obj.transform[9] = m.b3;
+  obj.transform[10] = m.c3;
+  obj.transform[11] = m.d3;
+  obj.transform[12] = m.a4;
+  obj.transform[13] = m.b4;
+  obj.transform[14] = m.c4;
+  obj.transform[15] = m.d4;
 
   for (unsigned int i = 0; i < node->mNumMeshes; ++i)
   {
     aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
     MeshPart part = loadMesh(mesh);
+
+    aiMaterial *material = scene->mMaterials[mesh->mMaterialIndex];
+    part.textureID = loadTexture(material, scene);
+
+    aiColor4D color(1.0f, 1.0f, 1.0f, 1.0f);
+
+    // Tenta di leggere il colore base (PBR glTF)
+    if (material->Get(AI_MATKEY_BASE_COLOR, color) != AI_SUCCESS)
+    {
+      // Fallback al vecchio diffuse color
+      material->Get(AI_MATKEY_COLOR_DIFFUSE, color);
+    }
+
+    float opacity = 1.0f;
+    if (material->Get(AI_MATKEY_OPACITY, opacity) == AI_SUCCESS)
+    {
+      // Se c'è un valore di opacità esplicito, usalo
+      if (opacity < 1.0f && color.a == 1.0f)
+      {
+        color.a = opacity;
+      }
+    }
+
+    part.diffuseColor[0] = color.r;
+    part.diffuseColor[1] = color.g;
+    part.diffuseColor[2] = color.b;
+    part.diffuseColor[3] = color.a;
+
+    // Tenta di leggere la rugosità/lucentezza
+    // In glTF PBR: Roughness (0 = liscio, 1 = ruvido).
+    // In Phong: Shininess (più alto = più lucido).
+    float roughness = 0.5f;
+    float metallic = 0.0f;
+
+    // Leggiamo i fattori PBR se esistono
+    material->Get(AI_MATKEY_METALLIC_FACTOR, metallic);
+    material->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness);
+
+    // Convertiamo approssimativamente in "forza speculare" per shader semplice
+    // Se è metallico o molto liscio (roughness bassa), brilla di più.
+    part.specularStrength = (1.0f - roughness) + metallic;
+    if (part.specularStrength > 1.0f)
+      part.specularStrength = 1.0f;
+
     obj.parts.push_back(part);
   }
 
@@ -248,9 +413,9 @@ int main(int argc, char *argv[])
 
   ge::gl::init();
 
-  if (!loadCarModel("../model/importMustang.obj"))
+  if (!loadCarModel("../model/mustang.glb"))
   {
-    std::cerr << "Impossibile caricare il modello della macchina" << std::endl;
+    std::cerr << "Error to load car model" << std::endl;
     return 1;
   }
 
@@ -258,24 +423,67 @@ int main(int argc, char *argv[])
   #version 410
   layout(location=0) in vec3 position;
   layout(location=1) in vec3 normal;
+  layout(location=2) in vec2 texCoord;
+
   out vec3 vNormal;
+  out vec3 vPos; 
+  out vec2 vTexCoord;
+
   uniform mat4 viewMatrix = mat4(1);
   uniform mat4 projMatrix = mat4(1);
   uniform mat4 modelMatrix = mat4(1);
+
   void main(){
-    mat4 mvp = projMatrix * viewMatrix * modelMatrix;
-    gl_Position = mvp * vec4(position, 1);
-    vNormal = mat3(viewMatrix * modelMatrix) * normal;
+    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    vPos = worldPos.xyz; // Passiamo la posizione nel mondo
+    gl_Position = projMatrix * viewMatrix * worldPos;
+    
+    // Normal matrix corretta per evitare distorsioni se scali
+    vNormal = mat3(transpose(inverse(modelMatrix))) * normal; 
+    vTexCoord = texCoord;
   }
   ).";
 
   auto fsSrc = R".(
   #version 410
   in vec3 vNormal;
+  in vec3 vPos;      // Posizione nel mondo (serve per la luce speculare)
+  in vec2 vTexCoord;
+  
   out vec4 fColor;
+  
+  uniform sampler2D texSampler;
+  uniform int hasTexture;
+  uniform vec4 materialColor;    // Colore letto da Assimp
+  uniform float specularStrength;// Quanto brilla
+  uniform vec3 viewPos;          // Posizione della telecamera
+
   void main(){
-    vec3 color = normalize(vNormal) * 0.5 + 0.5;
-    fColor = vec4(color, 1);
+    // 1. Colore Base (Texture o Tinta Unita)
+    vec4 baseColor = materialColor;
+    if (hasTexture == 1) {
+       // Se c'è texture, moltiplichiamo il colore (spesso bianco) per la texture
+       baseColor *= texture(texSampler, vTexCoord);
+    }
+
+    // 2. Luce Ambientale (Base minima)
+    vec3 ambient = 0.3 * baseColor.rgb;
+
+    // 3. Luce Diffusa (Direzionale)
+    vec3 norm = normalize(vNormal);
+    vec3 lightDir = normalize(vec3(5.0, 10.0, 5.0)); // Luce fissa in alto a destra
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * baseColor.rgb;
+
+    // 4. Luce Speculare (Riflessi luccicanti - Blinn-Phong)
+    vec3 viewDir = normalize(viewPos - vPos);
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float spec = pow(max(dot(norm, halfwayDir), 0.0), 32.0); // 32 = shininess fissa
+    vec3 specular = vec3(0.5) * spec * specularStrength; // Luce bianca * intensità
+
+    // Somma tutto
+    vec3 result = ambient + diffuse + specular;
+    fColor = vec4(result, baseColor.a);
   }
   ).";
 
@@ -286,8 +494,13 @@ int main(int argc, char *argv[])
   auto viewMatrixL = glGetUniformLocation(prg, "viewMatrix");
   auto projMatrixL = glGetUniformLocation(prg, "projMatrix");
   auto modelMatrixL = glGetUniformLocation(prg, "modelMatrix");
+  auto texSamplerL = glGetUniformLocation(prg, "texSampler");
+  auto hasTextureL = glGetUniformLocation(prg, "hasTexture");
+  auto materialColorL = glGetUniformLocation(prg, "materialColor");
+  auto specularStrengthL = glGetUniformLocation(prg, "specularStrength");
+  auto viewPosL = glGetUniformLocation(prg, "viewPos");
 
-  float cameraPosition[3] = {0, 0.5, 2};
+  float cameraPosition[3] = {0, 1.5, 8.0};
   float angleX = 0.3f;
   float angleY = 0.f;
 
@@ -300,11 +513,14 @@ int main(int argc, char *argv[])
   matrixIdentity(projMatrix);
 
   float sensitivity = 0.01;
-  float cameraSpeed = 0.01;
+  float cameraSpeed = 0.1;
 
   std::map<int, bool> keys;
 
   glEnable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
   bool running = true;
   while (running)
   {
@@ -356,33 +572,49 @@ int main(int argc, char *argv[])
     glUseProgram(prg);
     glProgramUniformMatrix4fv(prg, viewMatrixL, 1, GL_FALSE, viewMatrix);
     glProgramUniformMatrix4fv(prg, projMatrixL, 1, GL_FALSE, projMatrix);
+    glUniform3fv(viewPosL, 1, cameraPosition);
 
     for (auto &obj : carObjects)
     {
-      float modelMatrix[16];
-      matrixIdentity(modelMatrix);
+      // float modelMatrix[16];
+      // matrixIdentity(modelMatrix);
 
       // Applica offset basato sul nome dell'oggetto
-      float offsetX = 0.0f, offsetY = 0.0f, offsetZ = 0.0f;
+      // float offsetX = 0.0f, offsetY = 0.0f, offsetZ = 0.0f;
 
-      if (obj.name.find("door_R") != std::string::npos)
-      {
-        offsetX = 20.0f;
-      }
-      else if (obj.name.find("door_L") != std::string::npos)
-      {
-        offsetX = -20.0f;
-      }
-      else if (obj.name.find("hood") != std::string::npos)
-      {
-        offsetY = 20.0f;
-      }
-
-      translate(modelMatrix, offsetX, offsetY, offsetZ);
-      glUniformMatrix4fv(modelMatrixL, 1, GL_FALSE, modelMatrix);
+      /*   if (obj.name.find("door_R") != std::string::npos)
+         {
+           offsetZ = 20.0f;
+         }
+         else if (obj.name.find("door_L") != std::string::npos)
+         {
+           offsetZ = -20.0f;
+         }
+         else if (obj.name.find("hood") != std::string::npos)
+         {
+           offsetY = 20.0f;
+         }
+   */
+      glUniformMatrix4fv(modelMatrixL, 1, GL_FALSE, obj.transform);
 
       for (auto &part : obj.parts)
       {
+        // Passa il colore del materiale
+        glUniform4fv(materialColorL, 1, part.diffuseColor);
+        // Passa la lucentezza
+        glUniform1f(specularStrengthL, part.specularStrength);
+
+        if (part.textureID != 0)
+        {
+          glActiveTexture(GL_TEXTURE0);
+          glBindTexture(GL_TEXTURE_2D, part.textureID);
+          glUniform1i(texSamplerL, 0); // Usa texture unit 0
+          glUniform1i(hasTextureL, 1); // Diciamo allo shader "abbiamo una texture"
+        }
+        else
+        {
+          glUniform1i(hasTextureL, 0); // Niente texture
+        }
         glBindVertexArray(part.vao);
         glDrawElements(GL_TRIANGLES, part.indexCount, GL_UNSIGNED_INT, nullptr);
       }
