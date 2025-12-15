@@ -9,6 +9,8 @@ option(SDL_STATIC "" ON)
 add_subdirectory(libs/SDL-release-3.2.24)
 add_subdirectory(libs/geGL-master)
 add_subdirectory(libs/stb_image)
+set(GLM_TEST_ENABLE OFF CACHE BOOL "" FORCE)
+add_subdirectory(libs/glm-0.9.9.8)
 
 
 set(CMAKE_PREFIX_PATH "/opt/homebrew;$ENV{CMAKE_PREFIX_PATH}")
@@ -23,6 +25,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
   geGL::geGL
   assimp::assimp
   "-framework OpenGL"
+  glm::glm
   stb_image
 )
 

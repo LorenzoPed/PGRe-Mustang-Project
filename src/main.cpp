@@ -115,6 +115,37 @@ MeshPart loadMesh(aiMesh *mesh)
   return part;
 }
 
+GLuint loadCubemap(std::vector<std::string> faces)
+{
+  GLuint textureID;
+  glGenTextures(1, &textureID);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
+
+  int width, height, nrChannels;
+  for (unsigned int i = 0; i < faces.size(); i++)
+  {
+    unsigned char *data = stbi_load(faces[i].c_str(), &width, &height, &nrChannels, 0);
+    if (data)
+    {
+      glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
+                   0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+      stbi_image_free(data);
+    }
+    else
+    {
+      std::cerr << "Cubemap texture failed to load at path: " << faces[i] << std::endl;
+      stbi_image_free(data);
+    }
+  }
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+  return textureID;
+}
+
 GLuint loadTexture(const aiMaterial *material, const aiScene *scene)
 {
   aiString path;
@@ -407,11 +438,17 @@ int main(int argc, char *argv[])
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+  // Richiedi un buffer con 4 campioni per pixel (MSAA 4x)
+  SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+  SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 
   auto window = SDL_CreateWindow("PGR2025", 1024, 768, SDL_WINDOW_OPENGL);
   auto context = SDL_GL_CreateContext(window);
 
   ge::gl::init();
+
+  // Poi attiva l'enable nel rendering
+  glEnable(GL_MULTISAMPLE);
 
   if (!loadCarModel("../model/mustang.glb"))
   {
@@ -447,43 +484,66 @@ int main(int argc, char *argv[])
   auto fsSrc = R".(
   #version 410
   in vec3 vNormal;
-  in vec3 vPos;      // Posizione nel mondo (serve per la luce speculare)
+  in vec3 vPos;
   in vec2 vTexCoord;
   
   out vec4 fColor;
   
   uniform sampler2D texSampler;
+  uniform samplerCube skybox;
+  
   uniform int hasTexture;
-  uniform vec4 materialColor;    // Colore letto da Assimp
-  uniform float specularStrength;// Quanto brilla
-  uniform vec3 viewPos;          // Posizione della telecamera
+  uniform vec4 materialColor;
+  uniform float specularStrength;
+  uniform vec3 viewPos;
 
   void main(){
-    // 1. Colore Base (Texture o Tinta Unita)
+    // 1. Colore Base
     vec4 baseColor = materialColor;
     if (hasTexture == 1) {
-       // Se c'è texture, moltiplichiamo il colore (spesso bianco) per la texture
        baseColor *= texture(texSampler, vTexCoord);
     }
 
-    // 2. Luce Ambientale (Base minima)
-    vec3 ambient = 0.3 * baseColor.rgb;
+    // 2. Calcolo Vettori
+    vec3 N = normalize(vNormal);
+    vec3 V = normalize(viewPos - vPos); // Vettore Vista
+    vec3 R = reflect(-V, N);            // Vettore Riflesso
 
-    // 3. Luce Diffusa (Direzionale)
-    vec3 norm = normalize(vNormal);
-    vec3 lightDir = normalize(vec3(5.0, 10.0, 5.0)); // Luce fissa in alto a destra
-    float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuse = diff * baseColor.rgb;
+    // 3. Campiona Skybox
+    vec3 envColor = texture(skybox, R).rgb;
 
-    // 4. Luce Speculare (Riflessi luccicanti - Blinn-Phong)
-    vec3 viewDir = normalize(viewPos - vPos);
-    vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(norm, halfwayDir), 0.0), 32.0); // 32 = shininess fissa
-    vec3 specular = vec3(0.5) * spec * specularStrength; // Luce bianca * intensità
+    // 4. Logica Materiali
+    vec3 finalColor = baseColor.rgb;
 
-    // Somma tutto
-    vec3 result = ambient + diffuse + specular;
-    fColor = vec4(result, baseColor.a);
+    // --- CROMO / SPECCHIO (Solo se specularStrength è altissimo, es. > 0.9) ---
+    if (specularStrength > 0.95) {
+        // Il cromo è quasi solo riflesso
+        finalColor = mix(baseColor.rgb, envColor, 0.65); 
+    }
+    // --- CARROZZERIA / VERNICE / PLASTICA ---
+    else {
+        // Calcolo FRESNEL: 
+        // Quanto l'angolo di vista è radente? (0 = fronte, 1 = taglio)
+        // pow(..., 5.0) rende il riflesso forte SOLO ai bordi.
+        float fresnel = pow(1.0 - max(dot(N, V), 0.0), 5.0);
+        
+        // Il riflesso base è basso (es. 0.04 per vernice), ma aumenta col Fresnel
+        // Moltiplichiamo per specularStrength per controllare materiali diversi
+        float reflectionAmount = 0.05 + (fresnel * 0.5); 
+        reflectionAmount *= specularStrength; 
+
+        // Applichiamo il riflesso
+        finalColor = mix(baseColor.rgb, envColor, reflectionAmount);
+
+        // Aggiungiamo luce diffusa standard (altrimenti il lato in ombra è piatto)
+        vec3 lightDir = normalize(vec3(5.0, 10.0, 5.0));
+        float diff = max(dot(N, lightDir), 0.0);
+        
+        // La luce diffusa illumina il colore base, non il riflesso
+        finalColor += (baseColor.rgb * diff * 0.6);
+    }
+
+    fColor = vec4(finalColor, baseColor.a);
   }
   ).";
 
@@ -499,6 +559,21 @@ int main(int argc, char *argv[])
   auto materialColorL = glGetUniformLocation(prg, "materialColor");
   auto specularStrengthL = glGetUniformLocation(prg, "specularStrength");
   auto viewPosL = glGetUniformLocation(prg, "viewPos");
+
+  // ... dopo aver creato il programma shader (prg) ...
+
+  // 1. Carica le texture
+  std::vector<std::string> faces = {
+      "../model/skybox/right.jpg",
+      "../model/skybox/left.jpg",
+      "../model/skybox/top.jpg",
+      "../model/skybox/bottom.jpg",
+      "../model/skybox/front.jpg",
+      "../model/skybox/back.jpg"};
+  GLuint cubemapTexture = loadCubemap(faces);
+
+  // 2. Prendi location
+  auto skyboxL = glGetUniformLocation(prg, "skybox");
 
   float cameraPosition[3] = {0, 1.5, 8.0};
   float angleX = 0.3f;
@@ -574,27 +649,13 @@ int main(int argc, char *argv[])
     glProgramUniformMatrix4fv(prg, projMatrixL, 1, GL_FALSE, projMatrix);
     glUniform3fv(viewPosL, 1, cameraPosition);
 
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+    glUniform1i(skyboxL, 1);
+
     for (auto &obj : carObjects)
     {
-      // float modelMatrix[16];
-      // matrixIdentity(modelMatrix);
 
-      // Applica offset basato sul nome dell'oggetto
-      // float offsetX = 0.0f, offsetY = 0.0f, offsetZ = 0.0f;
-
-      /*   if (obj.name.find("door_R") != std::string::npos)
-         {
-           offsetZ = 20.0f;
-         }
-         else if (obj.name.find("door_L") != std::string::npos)
-         {
-           offsetZ = -20.0f;
-         }
-         else if (obj.name.find("hood") != std::string::npos)
-         {
-           offsetY = 20.0f;
-         }
-   */
       glUniformMatrix4fv(modelMatrixL, 1, GL_FALSE, obj.transform);
 
       for (auto &part : obj.parts)
