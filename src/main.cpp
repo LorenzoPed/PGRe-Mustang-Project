@@ -12,6 +12,12 @@
 #include <string>
 #include <stb_image.h>
 
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
+
 using namespace ge::gl;
 
 struct MeshPart
@@ -30,10 +36,12 @@ struct LogicalObject
 {
   std::string name;
   std::vector<MeshPart> parts;
-  float transform[16];
+  glm::mat4 transform; // Sostituito float[16] con glm::mat4
 };
 
 std::vector<LogicalObject> carObjects;
+Assimp::Importer importer;
+const aiScene *g_scene = nullptr;
 
 MeshPart loadMesh(aiMesh *mesh)
 {
@@ -61,7 +69,7 @@ MeshPart loadMesh(aiMesh *mesh)
       vertices.push_back(0.0f);
     }
 
-    // 3. Texture Coordinates (UV) - NUOVO!
+    // 3. Texture Coordinates (UV)
     if (mesh->mTextureCoords[0])
     {
       vertices.push_back(mesh->mTextureCoords[0][v].x);
@@ -96,15 +104,12 @@ MeshPart loadMesh(aiMesh *mesh)
 
   int stride = 8 * sizeof(float);
 
-  // Positions (Location 0)
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void *)0);
 
-  // Normal (Location 1)
   glEnableVertexAttribArray(1);
   glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void *)(3 * sizeof(float)));
 
-  // UV (Location 2)
   glEnableVertexAttribArray(2);
   glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void *)(6 * sizeof(float)));
 
@@ -149,24 +154,20 @@ GLuint loadCubemap(std::vector<std::string> faces)
 GLuint loadTexture(const aiMaterial *material, const aiScene *scene)
 {
   aiString path;
-  // Cerca la texture "Base Color" o "Diffuse"
   if (material->GetTexture(aiTextureType_BASE_COLOR, 0, &path) != AI_SUCCESS)
   {
     if (material->GetTexture(aiTextureType_DIFFUSE, 0, &path) != AI_SUCCESS)
     {
-      return 0; // Nessuna texture trovata
+      return 0;
     }
   }
 
-  // Controlla se è una texture embedded (inizia con *)
   const aiTexture *embeddedTex = scene->GetEmbeddedTexture(path.C_Str());
   unsigned char *data = nullptr;
   int width, height, channels;
-  int len = 0;
 
   if (embeddedTex)
   {
-    // Texture compressa dentro il GLB (es. PNG/JPG)
     if (embeddedTex->mHeight == 0)
     {
       data = stbi_load_from_memory(
@@ -176,7 +177,6 @@ GLuint loadTexture(const aiMaterial *material, const aiScene *scene)
     }
     else
     {
-      // Texture raw (raro nei GLB compressi)
       data = stbi_load_from_memory(
           reinterpret_cast<unsigned char *>(embeddedTex->pcData),
           embeddedTex->mWidth * embeddedTex->mHeight * 4,
@@ -185,7 +185,6 @@ GLuint loadTexture(const aiMaterial *material, const aiScene *scene)
   }
   else
   {
-    // Se non è embedded, prova a caricarla da file esterno (fallback)
     data = stbi_load(path.C_Str(), &width, &height, &channels, 4);
   }
 
@@ -217,23 +216,14 @@ void processNode(aiNode *node, const aiScene *scene)
   obj.name = node->mName.C_Str();
   aiMatrix4x4 m = node->mTransformation;
 
-  // Trasponi la matrice (da Row-Major di Assimp a Column-Major di OpenGL)
-  obj.transform[0] = m.a1;
-  obj.transform[1] = m.b1;
-  obj.transform[2] = m.c1;
-  obj.transform[3] = m.d1;
-  obj.transform[4] = m.a2;
-  obj.transform[5] = m.b2;
-  obj.transform[6] = m.c2;
-  obj.transform[7] = m.d2;
-  obj.transform[8] = m.a3;
-  obj.transform[9] = m.b3;
-  obj.transform[10] = m.c3;
-  obj.transform[11] = m.d3;
-  obj.transform[12] = m.a4;
-  obj.transform[13] = m.b4;
-  obj.transform[14] = m.c4;
-  obj.transform[15] = m.d4;
+  // Conversione da Assimp (Row-Major) a GLM (Column-Major)
+  // Costruiamo la matrice colonna per colonna usando i membri di Assimp
+  obj.transform = glm::mat4(
+      m.a1, m.b1, m.c1, m.d1, // Colonna 1
+      m.a2, m.b2, m.c2, m.d2, // Colonna 2
+      m.a3, m.b3, m.c3, m.d3, // Colonna 3
+      m.a4, m.b4, m.c4, m.d4  // Colonna 4
+  );
 
   for (unsigned int i = 0; i < node->mNumMeshes; ++i)
   {
@@ -244,18 +234,14 @@ void processNode(aiNode *node, const aiScene *scene)
     part.textureID = loadTexture(material, scene);
 
     aiColor4D color(1.0f, 1.0f, 1.0f, 1.0f);
-
-    // Tenta di leggere il colore base (PBR glTF)
     if (material->Get(AI_MATKEY_BASE_COLOR, color) != AI_SUCCESS)
     {
-      // Fallback al vecchio diffuse color
       material->Get(AI_MATKEY_COLOR_DIFFUSE, color);
     }
 
     float opacity = 1.0f;
     if (material->Get(AI_MATKEY_OPACITY, opacity) == AI_SUCCESS)
     {
-      // Se c'è un valore di opacità esplicito, usalo
       if (opacity < 1.0f && color.a == 1.0f)
       {
         color.a = opacity;
@@ -267,18 +253,11 @@ void processNode(aiNode *node, const aiScene *scene)
     part.diffuseColor[2] = color.b;
     part.diffuseColor[3] = color.a;
 
-    // Tenta di leggere la rugosità/lucentezza
-    // In glTF PBR: Roughness (0 = liscio, 1 = ruvido).
-    // In Phong: Shininess (più alto = più lucido).
     float roughness = 0.5f;
     float metallic = 0.0f;
-
-    // Leggiamo i fattori PBR se esistono
     material->Get(AI_MATKEY_METALLIC_FACTOR, metallic);
     material->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness);
 
-    // Convertiamo approssimativamente in "forza speculare" per shader semplice
-    // Se è metallico o molto liscio (roughness bassa), brilla di più.
     part.specularStrength = (1.0f - roughness) + metallic;
     if (part.specularStrength > 1.0f)
       part.specularStrength = 1.0f;
@@ -289,7 +268,7 @@ void processNode(aiNode *node, const aiScene *scene)
   if (!obj.parts.empty())
   {
     carObjects.push_back(obj);
-    std::cout << "Caricato oggetto: " << obj.name << " con " << obj.parts.size() << " mesh\n";
+    std::cout << "Object loaded: " << obj.name << " with " << obj.parts.size() << " meshes\n";
   }
 
   for (unsigned int i = 0; i < node->mNumChildren; ++i)
@@ -298,20 +277,150 @@ void processNode(aiNode *node, const aiScene *scene)
   }
 }
 
+// --- INIZIO BLOCCO ANIMAZIONI ---
+
+// Trova l'indice del keyframe per la Posizione
+unsigned int findPosition(float animationTime, const aiNodeAnim *pNodeAnim)
+{
+  for (unsigned int i = 0; i < pNodeAnim->mNumPositionKeys - 1; i++)
+  {
+    if (animationTime < (float)pNodeAnim->mPositionKeys[i + 1].mTime)
+      return i;
+  }
+  return 0;
+}
+
+// Trova l'indice del keyframe per la Rotazione
+unsigned int findRotation(float animationTime, const aiNodeAnim *pNodeAnim)
+{
+  for (unsigned int i = 0; i < pNodeAnim->mNumRotationKeys - 1; i++)
+  {
+    if (animationTime < (float)pNodeAnim->mRotationKeys[i + 1].mTime)
+      return i;
+  }
+  return 0;
+}
+
+// Trova l'indice del keyframe per la Scala
+unsigned int findScaling(float animationTime, const aiNodeAnim *pNodeAnim)
+{
+  for (unsigned int i = 0; i < pNodeAnim->mNumScalingKeys - 1; i++)
+  {
+    if (animationTime < (float)pNodeAnim->mScalingKeys[i + 1].mTime)
+      return i;
+  }
+  return 0;
+}
+
+glm::vec3 calcInterpolatedPosition(float animationTime, const aiNodeAnim *pNodeAnim)
+{
+  if (pNodeAnim->mNumPositionKeys == 1)
+  {
+    auto v = pNodeAnim->mPositionKeys[0].mValue;
+    return glm::vec3(v.x, v.y, v.z);
+  }
+  unsigned int idx = findPosition(animationTime, pNodeAnim);
+  unsigned int nextIdx = idx + 1;
+  float deltaTime = (float)(pNodeAnim->mPositionKeys[nextIdx].mTime - pNodeAnim->mPositionKeys[idx].mTime);
+  float factor = (animationTime - (float)pNodeAnim->mPositionKeys[idx].mTime) / deltaTime;
+  factor = glm::clamp(factor, 0.0f, 1.0f);
+
+  const auto &start = pNodeAnim->mPositionKeys[idx].mValue;
+  const auto &end = pNodeAnim->mPositionKeys[nextIdx].mValue;
+  auto delta = end - start;
+  auto res = start + factor * delta;
+  return glm::vec3(res.x, res.y, res.z);
+}
+
+glm::quat calcInterpolatedRotation(float animationTime, const aiNodeAnim *pNodeAnim)
+{
+  if (pNodeAnim->mNumRotationKeys == 1)
+  {
+    auto q = pNodeAnim->mRotationKeys[0].mValue;
+    return glm::quat(q.w, q.x, q.y, q.z);
+  }
+  unsigned int idx = findRotation(animationTime, pNodeAnim);
+  unsigned int nextIdx = idx + 1;
+  float deltaTime = (float)(pNodeAnim->mRotationKeys[nextIdx].mTime - pNodeAnim->mRotationKeys[idx].mTime);
+  float factor = (animationTime - (float)pNodeAnim->mRotationKeys[idx].mTime) / deltaTime;
+  factor = glm::clamp(factor, 0.0f, 1.0f);
+
+  const auto &startQ = pNodeAnim->mRotationKeys[idx].mValue;
+  const auto &endQ = pNodeAnim->mRotationKeys[nextIdx].mValue;
+  glm::quat startGLM(startQ.w, startQ.x, startQ.y, startQ.z);
+  glm::quat endGLM(endQ.w, endQ.x, endQ.y, endQ.z);
+
+  return glm::slerp(startGLM, endGLM, factor);
+}
+
+glm::vec3 calcInterpolatedScaling(float animationTime, const aiNodeAnim *pNodeAnim)
+{
+  if (pNodeAnim->mNumScalingKeys == 1)
+  {
+    auto v = pNodeAnim->mScalingKeys[0].mValue;
+    return glm::vec3(v.x, v.y, v.z);
+  }
+  unsigned int idx = findScaling(animationTime, pNodeAnim);
+  unsigned int nextIdx = idx + 1;
+  float deltaTime = (float)(pNodeAnim->mScalingKeys[nextIdx].mTime - pNodeAnim->mScalingKeys[idx].mTime);
+  float factor = (animationTime - (float)pNodeAnim->mScalingKeys[idx].mTime) / deltaTime;
+  factor = glm::clamp(factor, 0.0f, 1.0f);
+
+  const auto &start = pNodeAnim->mScalingKeys[idx].mValue;
+  const auto &end = pNodeAnim->mScalingKeys[nextIdx].mValue;
+  auto delta = end - start;
+  auto res = start + factor * delta;
+  return glm::vec3(res.x, res.y, res.z);
+}
+
+void updateAnimations(float currentTimeInSeconds)
+{
+  if (!g_scene || !g_scene->HasAnimations())
+    return;
+
+  aiAnimation *animation = g_scene->mAnimations[0];
+  float ticksPerSecond = (animation->mTicksPerSecond != 0) ? (float)animation->mTicksPerSecond : 25.0f;
+  float timeInTicks = currentTimeInSeconds * ticksPerSecond;
+  float animationTime = fmod(timeInTicks, (float)animation->mDuration);
+
+  for (unsigned int i = 0; i < animation->mNumChannels; i++)
+  {
+    aiNodeAnim *channel = animation->mChannels[i];
+    std::string nodeName = channel->mNodeName.C_Str();
+
+    for (auto &obj : carObjects)
+    {
+      if (obj.name == nodeName)
+      {
+        glm::vec3 pos = calcInterpolatedPosition(animationTime, channel);
+        glm::quat rot = calcInterpolatedRotation(animationTime, channel);
+        glm::vec3 scale = calcInterpolatedScaling(animationTime, channel);
+
+        glm::mat4 matPos = glm::translate(glm::mat4(1.0f), pos);
+        glm::mat4 matRot = glm::toMat4(rot);
+        glm::mat4 matScale = glm::scale(glm::mat4(1.0f), scale);
+
+        obj.transform = matPos * matRot * matScale;
+        break;
+      }
+    }
+  }
+}
+// --- FINE BLOCCO ANIMAZIONI ---
+
 bool loadCarModel(const std::string &path)
 {
-  Assimp::Importer importer;
-  const aiScene *scene = importer.ReadFile(path,
-                                           aiProcess_Triangulate | aiProcess_GenNormals | aiProcess_FlipUVs | aiProcess_JoinIdenticalVertices);
+  g_scene = importer.ReadFile(path,
+                              aiProcess_Triangulate | aiProcess_GenNormals | aiProcess_FlipUVs | aiProcess_JoinIdenticalVertices);
 
-  if (!scene || !scene->mRootNode)
+  if (!g_scene || !g_scene->mRootNode)
   {
-    std::cerr << "Errore caricamento modello: " << importer.GetErrorString() << std::endl;
+    std::cerr << "Error to load model: " << importer.GetErrorString() << std::endl;
     return false;
   }
 
   carObjects.clear();
-  processNode(scene->mRootNode, scene);
+  processNode(g_scene->mRootNode, g_scene);
 
   return true;
 }
@@ -356,75 +465,7 @@ GLuint createProgram(std::vector<GLuint> const &shaders)
   return prg;
 }
 
-void matrixMultiplication(float *O, float *A, float *B)
-{
-  for (int c = 0; c < 4; ++c)
-    for (int r = 0; r < 4; ++r)
-    {
-      O[c * 4 + r] = 0;
-      for (int i = 0; i < 4; ++i)
-        O[c * 4 + r] += A[i * 4 + r] * B[c * 4 + i];
-    }
-}
-
-void matrixIdentity(float *O)
-{
-  for (int c = 0; c < 4; ++c)
-    for (int r = 0; r < 4; ++r)
-      O[c * 4 + r] = (float)(c == r);
-}
-
-void rotateX(float *O, float angle)
-{
-  matrixIdentity(O);
-  auto cosa = cos(angle);
-  auto sina = sin(angle);
-  O[5] = +cosa;
-  O[6] = +sina;
-  O[9] = -sina;
-  O[10] = +cosa;
-}
-
-void rotateY(float *O, float angle)
-{
-  matrixIdentity(O);
-  auto cosa = cos(angle);
-  auto sina = sin(angle);
-  O[0] = +cosa;
-  O[2] = +sina;
-  O[8] = -sina;
-  O[10] = +cosa;
-}
-
-void translate(float *O, float x, float y, float z)
-{
-  matrixIdentity(O);
-  O[12] = x;
-  O[13] = y;
-  O[14] = z;
-}
-
-void frustum(float *O, float L, float R, float B, float T, float n, float f)
-{
-  matrixIdentity(O);
-  O[0] = 2 * n / (R - L);
-  O[5] = 2 * n / (T - B);
-  O[8] = (R + L) / (R - L);
-  O[9] = (T + B) / (T - B);
-  O[10] = -(f + n) / (f - n);
-  O[11] = -1;
-  O[14] = -2 * n * f / (f - n);
-  O[15] = 0;
-}
-
-void perspective(float *O, float fovy, float aspect, float n, float f)
-{
-  float R = n * tan(fovy / 2);
-  float L = -R;
-  float T = R / aspect;
-  float B = -T;
-  frustum(O, L, R, B, T, n, f);
-}
+// --- Funzioni matematiche manuali RIMOSSE (matrixMultiplication, rotateX, frustum, ecc.) ---
 
 int main(int argc, char *argv[])
 {
@@ -438,16 +479,14 @@ int main(int argc, char *argv[])
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
-  // Richiedi un buffer con 4 campioni per pixel (MSAA 4x)
   SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
   SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 
-  auto window = SDL_CreateWindow("PGR2025", 1024, 768, SDL_WINDOW_OPENGL);
+  auto window = SDL_CreateWindow("PGR2025 - GLM Version", 1024, 768, SDL_WINDOW_OPENGL);
   auto context = SDL_GL_CreateContext(window);
 
   ge::gl::init();
 
-  // Poi attiva l'enable nel rendering
   glEnable(GL_MULTISAMPLE);
 
   if (!loadCarModel("../model/mustang.glb"))
@@ -456,6 +495,7 @@ int main(int argc, char *argv[])
     return 1;
   }
 
+  // --- Shader immutato ---
   auto vsSrc = R".(
   #version 410
   layout(location=0) in vec3 position;
@@ -472,10 +512,10 @@ int main(int argc, char *argv[])
 
   void main(){
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
-    vPos = worldPos.xyz; // Passiamo la posizione nel mondo
+    vPos = worldPos.xyz; 
     gl_Position = projMatrix * viewMatrix * worldPos;
     
-    // Normal matrix corretta per evitare distorsioni se scali
+    // Normal matrix
     vNormal = mat3(transpose(inverse(modelMatrix))) * normal; 
     vTexCoord = texCoord;
   }
@@ -498,48 +538,30 @@ int main(int argc, char *argv[])
   uniform vec3 viewPos;
 
   void main(){
-    // 1. Colore Base
     vec4 baseColor = materialColor;
     if (hasTexture == 1) {
        baseColor *= texture(texSampler, vTexCoord);
     }
 
-    // 2. Calcolo Vettori
     vec3 N = normalize(vNormal);
-    vec3 V = normalize(viewPos - vPos); // Vettore Vista
-    vec3 R = reflect(-V, N);            // Vettore Riflesso
+    vec3 V = normalize(viewPos - vPos);
+    vec3 R = reflect(-V, N);           
 
-    // 3. Campiona Skybox
     vec3 envColor = texture(skybox, R).rgb;
-
-    // 4. Logica Materiali
     vec3 finalColor = baseColor.rgb;
 
-    // --- CROMO / SPECCHIO (Solo se specularStrength è altissimo, es. > 0.9) ---
     if (specularStrength > 0.95) {
-        // Il cromo è quasi solo riflesso
         finalColor = mix(baseColor.rgb, envColor, 0.65); 
     }
-    // --- CARROZZERIA / VERNICE / PLASTICA ---
     else {
-        // Calcolo FRESNEL: 
-        // Quanto l'angolo di vista è radente? (0 = fronte, 1 = taglio)
-        // pow(..., 5.0) rende il riflesso forte SOLO ai bordi.
         float fresnel = pow(1.0 - max(dot(N, V), 0.0), 5.0);
-        
-        // Il riflesso base è basso (es. 0.04 per vernice), ma aumenta col Fresnel
-        // Moltiplichiamo per specularStrength per controllare materiali diversi
         float reflectionAmount = 0.05 + (fresnel * 0.5); 
         reflectionAmount *= specularStrength; 
 
-        // Applichiamo il riflesso
         finalColor = mix(baseColor.rgb, envColor, reflectionAmount);
 
-        // Aggiungiamo luce diffusa standard (altrimenti il lato in ombra è piatto)
         vec3 lightDir = normalize(vec3(5.0, 10.0, 5.0));
         float diff = max(dot(N, lightDir), 0.0);
-        
-        // La luce diffusa illumina il colore base, non il riflesso
         finalColor += (baseColor.rgb * diff * 0.6);
     }
 
@@ -560,9 +582,6 @@ int main(int argc, char *argv[])
   auto specularStrengthL = glGetUniformLocation(prg, "specularStrength");
   auto viewPosL = glGetUniformLocation(prg, "viewPos");
 
-  // ... dopo aver creato il programma shader (prg) ...
-
-  // 1. Carica le texture
   std::vector<std::string> faces = {
       "../model/skybox/right.jpg",
       "../model/skybox/left.jpg",
@@ -572,20 +591,12 @@ int main(int argc, char *argv[])
       "../model/skybox/back.jpg"};
   GLuint cubemapTexture = loadCubemap(faces);
 
-  // 2. Prendi location
   auto skyboxL = glGetUniformLocation(prg, "skybox");
 
-  float cameraPosition[3] = {0, 1.5, 8.0};
+  // --- Variabili GLM ---
+  glm::vec3 cameraPosition(0.0f, 1.5f, 8.0f);
   float angleX = 0.3f;
-  float angleY = 0.f;
-
-  float viewMatrix[16];
-  float VT[16];
-  float VR[16];
-  float VRX[16];
-  float VRY[16];
-  float projMatrix[16];
-  matrixIdentity(projMatrix);
+  float angleY = 0.0f;
 
   float sensitivity = 0.01;
   float cameraSpeed = 0.1;
@@ -596,7 +607,10 @@ int main(int argc, char *argv[])
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+  float currentTime = 0.0f;
+  Uint64 lastTime = SDL_GetTicks();
   bool running = true;
+
   while (running)
   {
     SDL_Event event;
@@ -618,36 +632,60 @@ int main(int argc, char *argv[])
       }
     }
 
+    Uint64 now = SDL_GetTicks();
+    float deltaTime = (now - lastTime) / 1000.0f;
+    lastTime = now;
+
+    // Aggiorna animazioni
+    currentTime += deltaTime;
+    updateAnimations(currentTime);
+
+    // --- Calcolo View Matrix con GLM ---
+    // 1. Reset (Identità)
+    glm::mat4 viewMatrix = glm::mat4(1.0f);
+
+    // 2. Rotazione (Equivalente al tuo matrixMultiplication(VR, VRX, VRY))
+    // Nota: L'ordine è importante. Qui ruotiamo il "Mondo" attorno alla camera.
+    // Applicare X poi Y alla matrice View è equivalente a ruotare la camera.
+
+    viewMatrix = glm::rotate(viewMatrix, angleX, glm::vec3(1.0f, 0.0f, 0.0f));
+    viewMatrix = glm::rotate(viewMatrix, angleY, glm::vec3(0.0f, 1.0f, 0.0f));
+
+    // --- Movimento Camera (Free Look) ---
+    // Estraiamo i vettori "locali" della camera dalla matrice di vista.
+    // In una View Matrix ortogonale (solo rotazione), la trasposta è l'inversa.
+    // Le colonne della trasposta (ovvero le righe della View Matrix originale)
+    // rappresentano gli assi Right, Up, Forward della camera in coordinate World.
+
+    glm::vec3 right = glm::vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+    glm::vec3 up = glm::vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+    glm::vec3 forward = glm::vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+
     float leftRight = ((int)(keys[SDLK_D]) - (int)keys[SDLK_A]) * cameraSpeed;
     float forwardBackward = ((int)(keys[SDLK_S]) - (int)keys[SDLK_W]) * cameraSpeed;
     float upDown = ((int)(keys[SDLK_SPACE]) - (int)keys[SDLK_LSHIFT]) * cameraSpeed;
-    cameraPosition[0] += VR[0] * leftRight;
-    cameraPosition[1] += VR[4] * leftRight;
-    cameraPosition[2] += VR[8] * leftRight;
-    cameraPosition[0] += VR[2] * forwardBackward;
-    cameraPosition[1] += VR[6] * forwardBackward;
-    cameraPosition[2] += VR[10] * forwardBackward;
-    cameraPosition[0] += VR[1] * upDown;
-    cameraPosition[1] += VR[5] * upDown;
-    cameraPosition[2] += VR[9] * upDown;
 
-    translate(VT, -cameraPosition[0], -cameraPosition[1], -cameraPosition[2]);
-    rotateX(VRX, angleX);
-    rotateY(VRY, angleY);
+    // Aggiorniamo la posizione
+    cameraPosition += right * leftRight;
+    cameraPosition += forward * forwardBackward; // Forward è positivo verso "dietro" in OpenGL view space standard
+    cameraPosition += up * upDown;
 
-    matrixMultiplication(VR, VRX, VRY);
-    matrixMultiplication(viewMatrix, VR, VT);
+    // 3. Traslazione finale (spostiamo il mondo in direzione opposta alla camera)
+    viewMatrix = glm::translate(viewMatrix, -cameraPosition);
 
-    perspective(projMatrix, 90. / 180. * 3.1415925, 1024. / 768., 0.1, 1000.f);
+    // --- Projezione con GLM ---
+    glm::mat4 projMatrix = glm::perspective(glm::radians(90.0f), 1024.0f / 768.0f, 0.1f, 1000.0f);
 
     glClearColor(0.1, 0.1, 0.1, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glPointSize(10);
     glUseProgram(prg);
-    glProgramUniformMatrix4fv(prg, viewMatrixL, 1, GL_FALSE, viewMatrix);
-    glProgramUniformMatrix4fv(prg, projMatrixL, 1, GL_FALSE, projMatrix);
-    glUniform3fv(viewPosL, 1, cameraPosition);
+
+    // Invio Uniforms usando glm::value_ptr
+    glUniformMatrix4fv(viewMatrixL, 1, GL_FALSE, glm::value_ptr(viewMatrix));
+    glUniformMatrix4fv(projMatrixL, 1, GL_FALSE, glm::value_ptr(projMatrix));
+    glUniform3fv(viewPosL, 1, glm::value_ptr(cameraPosition));
 
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
@@ -655,26 +693,24 @@ int main(int argc, char *argv[])
 
     for (auto &obj : carObjects)
     {
-
-      glUniformMatrix4fv(modelMatrixL, 1, GL_FALSE, obj.transform);
+      // Passiamo la trasformazione dell'oggetto (ora glm::mat4)
+      glUniformMatrix4fv(modelMatrixL, 1, GL_FALSE, glm::value_ptr(obj.transform));
 
       for (auto &part : obj.parts)
       {
-        // Passa il colore del materiale
         glUniform4fv(materialColorL, 1, part.diffuseColor);
-        // Passa la lucentezza
         glUniform1f(specularStrengthL, part.specularStrength);
 
         if (part.textureID != 0)
         {
           glActiveTexture(GL_TEXTURE0);
           glBindTexture(GL_TEXTURE_2D, part.textureID);
-          glUniform1i(texSamplerL, 0); // Usa texture unit 0
-          glUniform1i(hasTextureL, 1); // Diciamo allo shader "abbiamo una texture"
+          glUniform1i(texSamplerL, 0);
+          glUniform1i(hasTextureL, 1);
         }
         else
         {
-          glUniform1i(hasTextureL, 0); // Niente texture
+          glUniform1i(hasTextureL, 0);
         }
         glBindVertexArray(part.vao);
         glDrawElements(GL_TRIANGLES, part.indexCount, GL_UNSIGNED_INT, nullptr);
