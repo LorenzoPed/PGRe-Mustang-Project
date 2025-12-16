@@ -530,28 +530,28 @@ int main(int argc, char *argv[])
   {
     std::string name = toLower(obj.name);
 
-    // PORTA SINISTRA (Frame 1 - 40)
+    // Left door (Frame 1 - 40)
     if (name.find("door_l") != std::string::npos)
     {
       obj.minTime = 0.0f;
-      obj.maxTime = 1666.0f;             // (40 / 24) * 1000
-      obj.currentAnimTime = obj.minTime; // Parte chiusa
+      obj.maxTime = 1666.0f; // (40 / 24) * 1000
+      obj.currentAnimTime = obj.minTime;
     }
 
-    // PORTA DESTRA (Frame 50 - 90)
+    // Right door (Frame 50 - 90)
     if (name.find("door_r") != std::string::npos)
     {
-      obj.minTime = 2083.0f;             // (50 / 24) * 1000
-      obj.maxTime = 3749.0f;             // (90 / 24) * 1000
-      obj.currentAnimTime = obj.minTime; // Parte chiusa (al frame 50)
+      obj.minTime = 2083.0f; // (50 / 24) * 1000
+      obj.maxTime = 3749.0f; // (90 / 24) * 1000
+      obj.currentAnimTime = obj.minTime;
     }
 
-    // COFANO (Frame 100 - 140)
+    // Hood (Frame 100 - 140)
     if (name.find("hood") != std::string::npos)
     {
-      obj.minTime = 4166.0f;             // (100 / 24) * 1000
-      obj.maxTime = 5833.0f;             // (140 / 24) * 1000
-      obj.currentAnimTime = obj.minTime; // Parte chiuso (al frame 100)
+      obj.minTime = 4166.0f; // (100 / 24) * 1000
+      obj.maxTime = 5833.0f; // (140 / 24) * 1000
+      obj.currentAnimTime = obj.minTime;
     }
   }
 
@@ -596,7 +596,7 @@ int main(int argc, char *argv[])
   }
   ).";
 
-  // --- SHADER SKYBOX ---
+  // skybox
   auto skyboxVsSrc = R".(
   #version 410
   layout (location = 0) in vec3 aPos;
@@ -721,7 +721,6 @@ int main(int argc, char *argv[])
     float deltaTime = (now - lastTime) / 1000.0f;
     lastTime = now;
 
-    // --- NUOVO UPDATE ---
     updateObjectAnimations(deltaTime);
 
     glm::mat4 viewMatrix = glm::mat4(1.0f);
