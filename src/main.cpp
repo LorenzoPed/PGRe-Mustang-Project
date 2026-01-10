@@ -20,7 +20,7 @@
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
-#include <BasicCamera/FreeLookCamera.h>
+#include <BasicCamera/OrbitCamera.h>
 #include <BasicCamera/PerspectiveCamera.h>
 
 using namespace ge::gl;
@@ -662,13 +662,18 @@ int main(int argc, char *argv[])
   std::vector<std::string> faces = {"../model/skybox/right.jpg", "../model/skybox/left.jpg", "../model/skybox/top.jpg", "../model/skybox/bottom.jpg", "../model/skybox/front.jpg", "../model/skybox/back.jpg"};
   GLuint cubemapTexture = loadCubemap(faces);
 
-  auto freeCamera = std::make_shared<basicCamera::FreeLookCamera>();
+  // --- SETUP CAMERE ---
+  auto orbitCamera = std::make_shared<basicCamera::OrbitCamera>();
+
+  // CORREZIONE: Usa setFocus e setDistance (non setRadius)
+  orbitCamera->setFocus(glm::vec3(0.0f, 0.5f, 0.0f));
+  orbitCamera->setDistance(8.0f);
+  orbitCamera->setYAngle(glm::radians(20.0f)); // Yaw (rotazione attorno Y)
+  orbitCamera->setXAngle(glm::radians(20.0f)); // Pitch (alto/basso)
+
+  // CORREZIONE: Creiamo l'oggetto perspective che prima mancava!
   auto perspective = std::make_shared<basicCamera::PerspectiveCamera>();
-
-  freeCamera->setPosition(glm::vec3(0.0f, 1.5f, 8.0f));
-  freeCamera->setAngle(1, 0.3f);
-
-  perspective->setFovy(glm::radians(90.0f));
+  perspective->setFovy(glm::radians(60.0f));
   perspective->setNear(0.1f);
   perspective->setFar(1000.0f);
   perspective->setAspect(1024.0f / 768.0f);
@@ -681,7 +686,7 @@ int main(int argc, char *argv[])
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-  SDL_SetWindowRelativeMouseMode(window, true);
+  SDL_SetWindowRelativeMouseMode(window, false);
 
   Uint64 lastTime = SDL_GetTicks();
   bool running = true;
@@ -723,11 +728,33 @@ int main(int argc, char *argv[])
         }
       }
 
+      // Dentro while(running) -> SDL_PollEvent...
+
       if (event.type == SDL_EVENT_MOUSE_MOTION)
       {
-        freeCamera->setAngle(1, freeCamera->getAngle(1) + event.motion.xrel * sensitivity);
+        if (event.motion.state & SDL_BUTTON_LMASK)
+        {
+          // Usa addYAngle per movimento orizzontale (ruota attorno all'auto)
+          // Usa addXAngle per movimento verticale (guarda su/giù)
+          orbitCamera->addYAngle(event.motion.xrel * sensitivity);
+          orbitCamera->addXAngle(event.motion.yrel * sensitivity);
+        }
+      }
 
-        freeCamera->setAngle(0, freeCamera->getAngle(0) + event.motion.yrel * sensitivity);
+      if (event.type == SDL_EVENT_MOUSE_WHEEL)
+      {
+        // CORREZIONE: Usa getDistance/setDistance invece di getRadius/setRadius
+        float currentDist = orbitCamera->getDistance();
+        float zoomSpeed = 2.0f;
+        float newDist = currentDist - (event.wheel.y * zoomSpeed);
+
+        // Limiti dello zoom
+        if (newDist < 2.0f)
+          newDist = 2.0f;
+        if (newDist > 1000.0f)
+          newDist = 1000.0f;
+
+        orbitCamera->setDistance(newDist);
       }
     }
 
@@ -737,32 +764,7 @@ int main(int argc, char *argv[])
 
     updateObjectAnimations(deltaTime);
 
-    glm::mat4 viewMatrix = freeCamera->getView();
-
-    glm::vec3 right = glm::vec3(glm::row(viewMatrix, 0));
-    glm::vec3 up = glm::vec3(glm::row(viewMatrix, 1));
-    glm::vec3 forward = -glm::vec3(glm::row(viewMatrix, 2));
-
-    float moveSpeed = cameraSpeed * deltaTime;
-    glm::vec3 displacement(0.0f);
-
-    if (keys[SDLK_W])
-      displacement += forward * moveSpeed;
-    if (keys[SDLK_S])
-      displacement -= forward * moveSpeed;
-    if (keys[SDLK_D])
-      displacement += right * moveSpeed;
-    if (keys[SDLK_A])
-      displacement -= right * moveSpeed;
-    if (keys[SDLK_SPACE])
-      displacement += up * moveSpeed;
-    if (keys[SDLK_LSHIFT])
-      displacement -= up * moveSpeed;
-
-    if (glm::length(displacement) > 0.0f)
-      freeCamera->setPosition(freeCamera->getPosition() + displacement);
-
-    viewMatrix = freeCamera->getView();
+    glm::mat4 viewMatrix = orbitCamera->getView();
 
     glm::mat4 projMatrix = perspective->getProjection();
 
@@ -774,9 +776,9 @@ int main(int argc, char *argv[])
 
     glUniformMatrix4fv(viewMatrixL, 1, GL_FALSE, glm::value_ptr(viewMatrix));
     glUniformMatrix4fv(projMatrixL, 1, GL_FALSE, glm::value_ptr(projMatrix));
-    glm::vec3 camPos = freeCamera->getPosition();
-    glUniform3fv(viewPosL, 1, glm::value_ptr(camPos));
+    glm::vec3 camPos = glm::vec3(glm::inverse(viewMatrix)[3]);
 
+    glUniform3fv(viewPosL, 1, glm::value_ptr(camPos));
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
     glUniform1i(skyboxL, 1);
