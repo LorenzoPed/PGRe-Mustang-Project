@@ -25,7 +25,11 @@
 
 using namespace ge::gl;
 
-// Utility per convertire stringa in minuscolo (per confronto case-insensitive)
+// --- CONFIGURAZIONE OMBRE ---
+const unsigned int SHADOW_WIDTH = 2048;
+const unsigned int SHADOW_HEIGHT = 2048;
+
+// Utility per convertire stringa in minuscolo
 std::string toLower(std::string s)
 {
   std::transform(s.begin(), s.end(), s.begin(),
@@ -52,58 +56,38 @@ struct LogicalObject
   std::vector<MeshPart> parts;
   glm::mat4 transform;
 
-  // --- NUOVI CAMPI PER INTERAZIONE ---
-  aiNodeAnim *animChannel = nullptr; // Canale animazione collegato
-  float currentAnimTime = 0.0f;      // Tempo locale dell'oggetto
-  float animDuration = 0.0f;         // Durata massima
-  bool isOpen = false;               // Stato logico (Aperto/Chiuso)
-  float minTime = 0.0f;              // Tempo INIZIO animazione (es. 2083 per porta DX)
+  aiNodeAnim *animChannel = nullptr;
+  float currentAnimTime = 0.0f;
+  float animDuration = 0.0f;
+  bool isOpen = false;
+  float minTime = 0.0f;
   float maxTime = 0.0f;
 };
 
+// Vertici per la Skybox
 float skyboxVertices[] = {
-    // positions
-    -1.0f, 1.0f, -1.0f,
-    -1.0f, -1.0f, -1.0f,
-    1.0f, -1.0f, -1.0f,
-    1.0f, -1.0f, -1.0f,
-    1.0f, 1.0f, -1.0f,
-    -1.0f, 1.0f, -1.0f,
+    -1.0f, 1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, -1.0f, -1.0f,
+    1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f,
+    -1.0f, -1.0f, 1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, -1.0f,
+    -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f,
+    1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f,
+    -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f,
+    -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f,
+    -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f,
+    1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f};
 
-    -1.0f, -1.0f, 1.0f,
-    -1.0f, -1.0f, -1.0f,
-    -1.0f, 1.0f, -1.0f,
-    -1.0f, 1.0f, -1.0f,
-    -1.0f, 1.0f, 1.0f,
-    -1.0f, -1.0f, 1.0f,
-
-    1.0f, -1.0f, -1.0f,
-    1.0f, -1.0f, 1.0f,
-    1.0f, 1.0f, 1.0f,
-    1.0f, 1.0f, 1.0f,
-    1.0f, 1.0f, -1.0f,
-    1.0f, -1.0f, -1.0f,
-
-    -1.0f, -1.0f, 1.0f,
-    -1.0f, 1.0f, 1.0f,
-    1.0f, 1.0f, 1.0f,
-    1.0f, 1.0f, 1.0f,
-    1.0f, -1.0f, 1.0f,
-    -1.0f, -1.0f, 1.0f,
-
-    -1.0f, 1.0f, -1.0f,
-    1.0f, 1.0f, -1.0f,
-    1.0f, 1.0f, 1.0f,
-    1.0f, 1.0f, 1.0f,
-    -1.0f, 1.0f, 1.0f,
-    -1.0f, 1.0f, -1.0f,
-
-    -1.0f, -1.0f, -1.0f,
-    -1.0f, -1.0f, 1.0f,
-    1.0f, -1.0f, -1.0f,
-    1.0f, -1.0f, -1.0f,
-    -1.0f, -1.0f, 1.0f,
-    1.0f, -1.0f, 1.0f};
+// Vertici per il Shadow Catcher (Pavimento)
+float catcherVertices[] = {
+    // Pos                // Normal          // UV
+    -15.0f, 0.0f, -15.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
+    15.0f, 0.0f, -15.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+    15.0f, 0.0f, 15.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f,
+    15.0f, 0.0f, 15.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f,
+    -15.0f, 0.0f, 15.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+    -15.0f, 0.0f, -15.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f};
 
 std::vector<LogicalObject> carObjects;
 Assimp::Importer importer;
@@ -116,12 +100,10 @@ MeshPart loadMesh(aiMesh *mesh)
 
   for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
   {
-    // 1. Posizioni
     vertices.push_back(mesh->mVertices[v].x);
     vertices.push_back(mesh->mVertices[v].y);
     vertices.push_back(mesh->mVertices[v].z);
 
-    // 2. Normali
     if (mesh->HasNormals())
     {
       vertices.push_back(mesh->mNormals[v].x);
@@ -135,7 +117,6 @@ MeshPart loadMesh(aiMesh *mesh)
       vertices.push_back(0.0f);
     }
 
-    // 3. Texture Coordinates
     if (mesh->mTextureCoords[0])
     {
       vertices.push_back(mesh->mTextureCoords[0][v].x);
@@ -158,11 +139,9 @@ MeshPart loadMesh(aiMesh *mesh)
   MeshPart part;
   glGenVertexArrays(1, &part.vao);
   glBindVertexArray(part.vao);
-
   glGenBuffers(1, &part.vbo);
   glBindBuffer(GL_ARRAY_BUFFER, part.vbo);
   glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
-
   glGenBuffers(1, &part.ebo);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, part.ebo);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
@@ -225,13 +204,9 @@ GLuint loadTexture(const aiMaterial *material, const aiScene *scene)
   if (embeddedTex)
   {
     if (embeddedTex->mHeight == 0)
-    {
       data = stbi_load_from_memory(reinterpret_cast<unsigned char *>(embeddedTex->pcData), embeddedTex->mWidth, &width, &height, &channels, 4);
-    }
     else
-    {
       data = stbi_load_from_memory(reinterpret_cast<unsigned char *>(embeddedTex->pcData), embeddedTex->mWidth * embeddedTex->mHeight * 4, &width, &height, &channels, 4);
-    }
   }
   else
   {
@@ -297,7 +272,6 @@ void processNode(aiNode *node, const aiScene *scene)
 
   if (!obj.parts.empty())
   {
-    // --- LOGICA COLLEGAMENTO ANIMAZIONI MIGLIORATA (CASE INSENSITIVE) ---
     if (g_scene && g_scene->HasAnimations())
     {
       bool found = false;
@@ -310,8 +284,6 @@ void processNode(aiNode *node, const aiScene *scene)
         {
           std::string chanName = anim->mChannels[c]->mNodeName.C_Str();
           std::string chanNameLower = toLower(chanName);
-
-          // Confronto "rilassato": controlla se uno contiene l'altro
           if (chanNameLower.find(objNameLower) != std::string::npos ||
               objNameLower.find(chanNameLower) != std::string::npos)
           {
@@ -328,16 +300,12 @@ void processNode(aiNode *node, const aiScene *scene)
           break;
       }
     }
-    // --------------------------------------------------------------------
-
     carObjects.push_back(obj);
     std::cout << "Object loaded: " << obj.name << "\n";
   }
 
   for (unsigned int i = 0; i < node->mNumChildren; ++i)
-  {
     processNode(node->mChildren[i], scene);
-  }
 }
 
 // --- FUNZIONI DI INTERPOLAZIONE ---
@@ -420,56 +388,39 @@ glm::vec3 calcInterpolatedScaling(float animationTime, const aiNodeAnim *pNodeAn
 
 void updateObjectAnimations(float deltaTime)
 {
-  float animSpeed = 1000.0f; // Velocità animazione (Ticks/secondo)
-
+  float animSpeed = 1000.0f;
   for (auto &obj : carObjects)
   {
     if (!obj.animChannel)
       continue;
-
-    // Se l'animazione deve APRIRE
     if (obj.isOpen)
     {
       obj.currentAnimTime += deltaTime * animSpeed;
-      // BLOCCATI a maxTime (non a animDuration)
       if (obj.currentAnimTime > obj.maxTime)
         obj.currentAnimTime = obj.maxTime;
     }
-    // Se l'animazione deve CHIUDERE
     else
     {
       obj.currentAnimTime -= deltaTime * animSpeed;
-      // BLOCCATI a minTime (non a 0.0f)
       if (obj.currentAnimTime < obj.minTime)
         obj.currentAnimTime = obj.minTime;
     }
-
-    // Calcolo matrici
     glm::vec3 pos = calcInterpolatedPosition(obj.currentAnimTime, obj.animChannel);
     glm::quat rot = calcInterpolatedRotation(obj.currentAnimTime, obj.animChannel);
     glm::vec3 scale = calcInterpolatedScaling(obj.currentAnimTime, obj.animChannel);
-
-    glm::mat4 matPos = glm::translate(glm::mat4(1.0f), pos);
-    glm::mat4 matRot = glm::toMat4(rot);
-    glm::mat4 matScale = glm::scale(glm::mat4(1.0f), scale);
-
-    obj.transform = matPos * matRot * matScale;
+    obj.transform = glm::translate(glm::mat4(1.0f), pos) * glm::toMat4(rot) * glm::scale(glm::mat4(1.0f), scale);
   }
 }
 
 bool loadCarModel(const std::string &path)
 {
   g_scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_GenNormals | aiProcess_FlipUVs | aiProcess_JoinIdenticalVertices);
-
   if (!g_scene || !g_scene->mRootNode)
   {
     std::cerr << "Error loading model: " << importer.GetErrorString() << std::endl;
     return false;
   }
-
-  // Debug info
   std::cout << "--- DEBUG GLB ---" << g_scene->mNumAnimations << std::endl;
-
   carObjects.clear();
   processNode(g_scene->mRootNode, g_scene);
   return true;
@@ -533,145 +484,239 @@ int main(int argc, char *argv[])
   for (auto &obj : carObjects)
   {
     std::string name = toLower(obj.name);
-
-    // Left door (Frame 1 - 40)
     if (name.find("door_l") != std::string::npos)
     {
       obj.minTime = 0.0f;
-      obj.maxTime = 1666.0f; // (40 / 24) * 1000
+      obj.maxTime = 1666.0f;
       obj.currentAnimTime = obj.minTime;
     }
-
-    // Right door (Frame 50 - 90)
     if (name.find("door_r") != std::string::npos)
     {
-      obj.minTime = 2083.0f; // (50 / 24) * 1000
-      obj.maxTime = 3749.0f; // (90 / 24) * 1000
+      obj.minTime = 2083.0f;
+      obj.maxTime = 3749.0f;
       obj.currentAnimTime = obj.minTime;
     }
-
-    // Hood (Frame 100 - 140)
     if (name.find("hood") != std::string::npos)
     {
-      obj.minTime = 4166.0f; // (100 / 24) * 1000
-      obj.maxTime = 5833.0f; // (140 / 24) * 1000
+      obj.minTime = 4166.0f;
+      obj.maxTime = 5833.0f;
       obj.currentAnimTime = obj.minTime;
     }
   }
 
+  // --- SETUP FRAMEBUFFER PER OMBRE (SHADOW MAP) ---
+  GLuint depthMapFBO;
+  glGenFramebuffers(1, &depthMapFBO);
+  GLuint depthMap;
+  glGenTextures(1, &depthMap);
+  glBindTexture(GL_TEXTURE_2D, depthMap);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+  float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
+  glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+  glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+  glDrawBuffer(GL_NONE);
+  glReadBuffer(GL_NONE);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+  // --- SHADERS ---
+
+  // 1. Depth Shader (per creare la shadow map)
+  auto depthVsSrc = R".(
+  #version 410 core
+  layout (location = 0) in vec3 position;
+  uniform mat4 lightSpaceMatrix;
+  uniform mat4 modelMatrix;
+  void main() {
+      gl_Position = lightSpaceMatrix * modelMatrix * vec4(position, 1.0);
+  }
+  ).";
+  auto depthFsSrc = R".(
+  #version 410 core
+  void main() {
+      // Non scriviamo colore, solo profondità
+  }
+  ).";
+  auto depthProg = createProgram({createShader(GL_VERTEX_SHADER, depthVsSrc), createShader(GL_FRAGMENT_SHADER, depthFsSrc)});
+  auto d_lightSpaceMatrixL = glGetUniformLocation(depthProg, "lightSpaceMatrix");
+  auto d_modelMatrixL = glGetUniformLocation(depthProg, "modelMatrix");
+
+  // 2. Main Shader (aggiornato per ombre e shadow catcher)
   auto vsSrc = R".(
   #version 410
   layout(location=0) in vec3 position;
   layout(location=1) in vec3 normal;
   layout(location=2) in vec2 texCoord;
+
   out vec3 vNormal; out vec3 vPos; out vec2 vTexCoord;
+  out vec4 vFragPosLightSpace; // Output per calcolo ombre
+
   uniform mat4 viewMatrix; uniform mat4 projMatrix; uniform mat4 modelMatrix;
+  uniform mat4 lightSpaceMatrix; // Matrice della luce
+
   void main(){
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
     vPos = worldPos.xyz; 
     gl_Position = projMatrix * viewMatrix * worldPos;
     vNormal = mat3(transpose(inverse(modelMatrix))) * normal; 
     vTexCoord = texCoord;
+    
+    // Calcola posizione vista dalla luce
+    vFragPosLightSpace = lightSpaceMatrix * worldPos;
   }
   ).";
 
   auto fsSrc = R".(
   #version 410
   in vec3 vNormal; in vec3 vPos; in vec2 vTexCoord;
+  in vec4 vFragPosLightSpace; // Posizione nella shadow map
+
   out vec4 fColor;
-  uniform sampler2D texSampler; uniform samplerCube skybox;
-  uniform int hasTexture; uniform vec4 materialColor; uniform float specularStrength; uniform vec3 viewPos;
+
+  uniform sampler2D texSampler; 
+  uniform samplerCube skybox;
+  uniform sampler2D shadowMap; // La texture delle ombre
+
+  uniform int hasTexture; 
+  uniform vec4 materialColor; 
+  uniform float specularStrength; 
+  uniform vec3 viewPos;
+  uniform int isShadowCatcher; // 1 = Pavimento Trasparente
+
+  float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
+      vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+      projCoords = projCoords * 0.5 + 0.5;
+      if(projCoords.z > 1.0) return 0.0;
+
+      float currentDepth = projCoords.z;
+      float bias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.0005);
+      
+      float shadow = 0.0;
+      vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+      for(int x = -1; x <= 1; ++x) {
+          for(int y = -1; y <= 1; ++y) {
+              float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r; 
+              shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;        
+          }    
+      }
+      shadow /= 9.0;
+      return shadow;
+  }
+
   void main(){
-    vec4 baseColor = materialColor;
-    if (hasTexture == 1) baseColor *= texture(texSampler, vTexCoord);
-    vec3 N = normalize(vNormal); vec3 V = normalize(viewPos - vPos); vec3 R = reflect(-V, N);
-    vec3 envColor = texture(skybox, R).rgb;
-    vec3 finalColor = baseColor.rgb;
-    if (specularStrength > 0.95) { finalColor = mix(baseColor.rgb, envColor, 0.65); }
-    else {
-        float fresnel = pow(1.0 - max(dot(N, V), 0.0), 5.0);
-        float reflectionAmount = 0.05 + (fresnel * 0.5); reflectionAmount *= specularStrength; 
-        finalColor = mix(baseColor.rgb, envColor, reflectionAmount);
-        vec3 lightDir = normalize(vec3(5.0, 10.0, 5.0));
-        float diff = max(dot(N, lightDir), 0.0);
-        finalColor += (baseColor.rgb * diff * 0.6);
-    }
-    fColor = vec4(finalColor, baseColor.a);
+      vec3 lightPos = vec3(10.0, 20.0, 10.0);
+      vec3 L = normalize(lightPos);
+      vec3 N = normalize(vNormal);
+
+      float shadow = ShadowCalculation(vFragPosLightSpace, N, L);
+
+      // --- SHADOW CATCHER ---
+      if (isShadowCatcher == 1) {
+          fColor = vec4(0.0, 0.0, 0.0, shadow * 0.7); // Nero con alpha basato sull'ombra
+          return;
+      }
+
+      // --- OGGETTO NORMALE ---
+      vec4 baseColor = materialColor;
+      if (hasTexture == 1) baseColor *= texture(texSampler, vTexCoord);
+      
+      vec3 V = normalize(viewPos - vPos); 
+      vec3 R = reflect(-V, N);
+      vec3 envColor = texture(skybox, R).rgb;
+      
+      vec3 ambient = 0.3 * baseColor.rgb;
+      float diff = max(dot(N, L), 0.0);
+      vec3 diffuse = diff * baseColor.rgb;
+      
+      // Applica ombra alla parte diffusa
+      vec3 lighting = ambient + (1.0 - shadow) * diffuse;
+      
+      vec3 finalColor;
+      if (specularStrength > 0.95) { 
+          finalColor = mix(lighting, envColor, 0.65); 
+      } else {
+          float fresnel = pow(1.0 - max(dot(N, V), 0.0), 5.0);
+          float reflectionAmount = 0.05 + (fresnel * 0.5); reflectionAmount *= specularStrength; 
+          finalColor = mix(lighting, envColor, reflectionAmount);
+      }
+      
+      fColor = vec4(finalColor, baseColor.a);
   }
   ).";
 
-  // skybox
+  // 3. Skybox Shader (invariato)
   auto skyboxVsSrc = R".(
   #version 410
   layout (location = 0) in vec3 aPos;
   out vec3 TexCoords;
-  uniform mat4 projection;
-  uniform mat4 view;
-  void main()
-  {
-      TexCoords = aPos;
-      vec4 pos = projection * view * vec4(aPos, 1.0);
-      // Trucco per massimizzare la profondità (z=w -> z/w = 1.0)
-      gl_Position = pos.xyww;
-  }  
+  uniform mat4 projection; uniform mat4 view;
+  void main() { TexCoords = aPos; vec4 pos = projection * view * vec4(aPos, 1.0); gl_Position = pos.xyww; }
   ).";
-
   auto skyboxFsSrc = R".(
   #version 410
-  out vec4 FragColor;
-  in vec3 TexCoords;
-  uniform samplerCube skybox;
-  void main()
-  {    
-      FragColor = texture(skybox, TexCoords);
-  }
+  out vec4 FragColor; in vec3 TexCoords; uniform samplerCube skybox;
+  void main() { FragColor = texture(skybox, TexCoords); }
   ).";
 
-  auto skyboxVS = createShader(GL_VERTEX_SHADER, skyboxVsSrc);
-  auto skyboxFS = createShader(GL_FRAGMENT_SHADER, skyboxFsSrc);
-  auto skyboxProgram = createProgram({skyboxVS, skyboxFS});
-
+  auto skyboxProgram = createProgram({createShader(GL_VERTEX_SHADER, skyboxVsSrc), createShader(GL_FRAGMENT_SHADER, skyboxFsSrc)});
   auto skyProjL = glGetUniformLocation(skyboxProgram, "projection");
   auto skyViewL = glGetUniformLocation(skyboxProgram, "view");
   auto skyTexL = glGetUniformLocation(skyboxProgram, "skybox");
 
-  auto vs = createShader(GL_VERTEX_SHADER, vsSrc);
-  auto fs = createShader(GL_FRAGMENT_SHADER, fsSrc);
-  auto prg = createProgram({vs, fs});
-
+  auto prg = createProgram({createShader(GL_VERTEX_SHADER, vsSrc), createShader(GL_FRAGMENT_SHADER, fsSrc)});
   auto viewMatrixL = glGetUniformLocation(prg, "viewMatrix");
   auto projMatrixL = glGetUniformLocation(prg, "projMatrix");
   auto modelMatrixL = glGetUniformLocation(prg, "modelMatrix");
+  auto lightSpaceMatrixL = glGetUniformLocation(prg, "lightSpaceMatrix"); // Nuovo uniform
   auto texSamplerL = glGetUniformLocation(prg, "texSampler");
   auto hasTextureL = glGetUniformLocation(prg, "hasTexture");
   auto materialColorL = glGetUniformLocation(prg, "materialColor");
   auto specularStrengthL = glGetUniformLocation(prg, "specularStrength");
   auto viewPosL = glGetUniformLocation(prg, "viewPos");
   auto skyboxL = glGetUniformLocation(prg, "skybox");
+  auto shadowMapL = glGetUniformLocation(prg, "shadowMap");             // Nuovo uniform
+  auto isShadowCatcherL = glGetUniformLocation(prg, "isShadowCatcher"); // Nuovo uniform
 
-  // cube map (skybox)
+  // Setup Geometry Skybox
   GLuint skyboxVAO, skyboxVBO;
   glGenVertexArrays(1, &skyboxVAO);
-  glGenBuffers(1, &skyboxVBO);
   glBindVertexArray(skyboxVAO);
+  glGenBuffers(1, &skyboxVBO);
   glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
   glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), &skyboxVertices, GL_STATIC_DRAW);
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
 
+  // Setup Geometry Shadow Catcher (Piano a terra)
+  GLuint catcherVAO, catcherVBO;
+  glGenVertexArrays(1, &catcherVAO);
+  glBindVertexArray(catcherVAO);
+  glGenBuffers(1, &catcherVBO);
+  glBindBuffer(GL_ARRAY_BUFFER, catcherVBO);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(catcherVertices), &catcherVertices, GL_STATIC_DRAW);
+  // Usiamo lo stesso layout degli altri oggetti (Pos, Norm, UV) per compatibilità con shader
+  int stride = 8 * sizeof(float);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void *)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void *)(3 * sizeof(float)));
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void *)(6 * sizeof(float)));
+
   std::vector<std::string> faces = {"../model/skybox/right.jpg", "../model/skybox/left.jpg", "../model/skybox/top.jpg", "../model/skybox/bottom.jpg", "../model/skybox/front.jpg", "../model/skybox/back.jpg"};
   GLuint cubemapTexture = loadCubemap(faces);
 
-  // --- SETUP CAMERE ---
+  // Setup Camere
   auto orbitCamera = std::make_shared<basicCamera::OrbitCamera>();
-
-  // CORREZIONE: Usa setFocus e setDistance (non setRadius)
   orbitCamera->setFocus(glm::vec3(0.0f, 0.5f, 0.0f));
   orbitCamera->setDistance(8.0f);
-  orbitCamera->setYAngle(glm::radians(20.0f)); // Yaw (rotazione attorno Y)
-  orbitCamera->setXAngle(glm::radians(20.0f)); // Pitch (alto/basso)
+  orbitCamera->setYAngle(glm::radians(20.0f));
+  orbitCamera->setXAngle(glm::radians(20.0f));
 
-  // CORREZIONE: Creiamo l'oggetto perspective che prima mancava!
   auto perspective = std::make_shared<basicCamera::PerspectiveCamera>();
   perspective->setFovy(glm::radians(60.0f));
   perspective->setNear(0.1f);
@@ -679,13 +724,11 @@ int main(int argc, char *argv[])
   perspective->setAspect(1024.0f / 768.0f);
 
   float sensitivity = 0.005f;
-  float cameraSpeed = 20.0f;
   std::map<int, bool> keys;
 
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
   SDL_SetWindowRelativeMouseMode(window, false);
 
   Uint64 lastTime = SDL_GetTicks();
@@ -703,57 +746,39 @@ int main(int argc, char *argv[])
       if (event.type == SDL_EVENT_KEY_DOWN)
       {
         keys[event.key.key] = true;
-
-        // --- GESTIONE TASTI APERTURA/CHIUSURA ---
         std::string targetPart = "";
         if (event.key.key == SDLK_1)
-          targetPart = "door_l"; // Nome lowercase per confronto sicuro
+          targetPart = "door_l";
         if (event.key.key == SDLK_2)
           targetPart = "door_r";
         if (event.key.key == SDLK_3)
           targetPart = "hood";
-
         if (!targetPart.empty())
         {
           for (auto &obj : carObjects)
           {
-            // Controlliamo se il nome dell'oggetto contiene la parola chiave (tutto minuscolo)
             std::string objNameLower = toLower(obj.name);
             if (objNameLower.find(targetPart) != std::string::npos)
-            {
-              obj.isOpen = !obj.isOpen; // Inverte lo stato
-              std::cout << "TOGGLE: " << obj.name << " -> " << (obj.isOpen ? "OPEN" : "CLOSE") << std::endl;
-            }
+              obj.isOpen = !obj.isOpen;
           }
         }
       }
-
-      // Dentro while(running) -> SDL_PollEvent...
-
       if (event.type == SDL_EVENT_MOUSE_MOTION)
       {
         if (event.motion.state & SDL_BUTTON_LMASK)
         {
-          // Usa addYAngle per movimento orizzontale (ruota attorno all'auto)
-          // Usa addXAngle per movimento verticale (guarda su/giù)
           orbitCamera->addYAngle(event.motion.xrel * sensitivity);
           orbitCamera->addXAngle(event.motion.yrel * sensitivity);
         }
       }
-
       if (event.type == SDL_EVENT_MOUSE_WHEEL)
       {
-        // CORREZIONE: Usa getDistance/setDistance invece di getRadius/setRadius
         float currentDist = orbitCamera->getDistance();
-        float zoomSpeed = 2.0f;
-        float newDist = currentDist - (event.wheel.y * zoomSpeed);
-
-        // Limiti dello zoom
+        float newDist = currentDist - (event.wheel.y * 2.0f);
         if (newDist < 2.0f)
           newDist = 2.0f;
         if (newDist > 1000.0f)
           newDist = 1000.0f;
-
         orbitCamera->setDistance(newDist);
       }
     }
@@ -764,25 +789,67 @@ int main(int argc, char *argv[])
 
     updateObjectAnimations(deltaTime);
 
-    glm::mat4 viewMatrix = orbitCamera->getView();
+    // --- RENDER LOOP ---
 
-    glm::mat4 projMatrix = perspective->getProjection();
+    // 1. Calcola matrici Luce (Sole)
+    glm::vec3 lightPos(10.0f, 20.0f, 10.0f);
+    glm::mat4 lightProjection = glm::ortho(-15.0f, 15.0f, -15.0f, 15.0f, 1.0f, 50.0f);
+    glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
+    // --- PASS 1: Shadow Mapping (Disegna nel Framebuffer della profondità) ---
+    glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glUseProgram(depthProg);
+    glUniformMatrix4fv(d_lightSpaceMatrixL, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+
+    for (auto &obj : carObjects)
+    {
+      glUniformMatrix4fv(d_modelMatrixL, 1, GL_FALSE, glm::value_ptr(obj.transform));
+      for (auto &part : obj.parts)
+      {
+        glBindVertexArray(part.vao);
+        glDrawElements(GL_TRIANGLES, part.indexCount, GL_UNSIGNED_INT, nullptr);
+      }
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // --- PASS 2: Render Finale (Disegna a schermo) ---
+    int w, h;
+    SDL_GetWindowSize(window, &w, &h);
+    glViewport(0, 0, w, h);
     glClearColor(0.1, 0.1, 0.1, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glPointSize(10);
-    glUseProgram(prg);
-
-    glUniformMatrix4fv(viewMatrixL, 1, GL_FALSE, glm::value_ptr(viewMatrix));
-    glUniformMatrix4fv(projMatrixL, 1, GL_FALSE, glm::value_ptr(projMatrix));
+    glm::mat4 viewMatrix = orbitCamera->getView();
+    glm::mat4 projMatrix = perspective->getProjection();
     glm::vec3 camPos = glm::vec3(glm::inverse(viewMatrix)[3]);
 
+    glUseProgram(prg);
+    glUniformMatrix4fv(viewMatrixL, 1, GL_FALSE, glm::value_ptr(viewMatrix));
+    glUniformMatrix4fv(projMatrixL, 1, GL_FALSE, glm::value_ptr(projMatrix));
+    glUniformMatrix4fv(lightSpaceMatrixL, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
     glUniform3fv(viewPosL, 1, glm::value_ptr(camPos));
+
+    // Texture Unit 1: Skybox, Unit 2: Shadow Map
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
     glUniform1i(skyboxL, 1);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glUniform1i(shadowMapL, 2);
 
+    // A. Disegna il SHADOW CATCHER (Pavimento)
+    glUniform1i(isShadowCatcherL, 1); // Attiva modalità catcher
+    glm::mat4 groundModel = glm::mat4(1.0f);
+    groundModel = glm::scale(groundModel, glm::vec3(5.0f, 1.0f, 5.0f));
+    glUniformMatrix4fv(modelMatrixL, 1, GL_FALSE, glm::value_ptr(groundModel));
+    glBindVertexArray(catcherVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    // B. Disegna l'AUTO
+    glUniform1i(isShadowCatcherL, 0); // Disattiva modalità catcher
     for (auto &obj : carObjects)
     {
       glUniformMatrix4fv(modelMatrixL, 1, GL_FALSE, glm::value_ptr(obj.transform));
@@ -806,27 +873,18 @@ int main(int argc, char *argv[])
       }
     }
 
-    // render skybox last
-    // Cambiamo la funzione depth per disegnare lo sfondo "dietro" tutto il resto
+    // C. Disegna Skybox
     glDepthFunc(GL_LEQUAL);
     glUseProgram(skyboxProgram);
-
-    // Rimuoviamo la traslazione dalla view matrix (lo skybox non si muove, ruota solo)
     glm::mat4 viewNoTrans = glm::mat4(glm::mat3(viewMatrix));
-
     glUniformMatrix4fv(skyViewL, 1, GL_FALSE, glm::value_ptr(viewNoTrans));
     glUniformMatrix4fv(skyProjL, 1, GL_FALSE, glm::value_ptr(projMatrix));
-
-    // Leghiamo la stessa cubemap che usi per i riflessi
     glBindVertexArray(skyboxVAO);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
     glUniform1i(skyTexL, 0);
-
     glDrawArrays(GL_TRIANGLES, 0, 36);
     glBindVertexArray(0);
-
-    // Ripristiniamo la depth function standard
     glDepthFunc(GL_LESS);
 
     SDL_GL_SwapWindow(window);
