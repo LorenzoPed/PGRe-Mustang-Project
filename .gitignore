@@ -2,8 +2,7 @@
 SDL/
 geGL-master/
 extern/
-libs/*
-libs
+
 
 # File di compilazione (Visual Studio / GCC)
 bin/

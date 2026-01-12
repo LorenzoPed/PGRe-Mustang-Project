@@ -25,11 +25,9 @@
 
 using namespace ge::gl;
 
-// --- CONFIGURAZIONE OMBRE ---
-const unsigned int SHADOW_WIDTH = 2048;
-const unsigned int SHADOW_HEIGHT = 2048;
+const unsigned int SHADOW_WIDTH = 4096;
+const unsigned int SHADOW_HEIGHT = 4096;
 
-// Utility per convertire stringa in minuscolo
 std::string toLower(std::string s)
 {
   std::transform(s.begin(), s.end(), s.begin(),
@@ -64,7 +62,7 @@ struct LogicalObject
   float maxTime = 0.0f;
 };
 
-// Vertici per la Skybox
+//  Skybox Verctices
 float skyboxVertices[] = {
     -1.0f, 1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, -1.0f, -1.0f,
     1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f,
@@ -79,7 +77,7 @@ float skyboxVertices[] = {
     -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f,
     1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f};
 
-// Vertici per il Shadow Catcher (Pavimento)
+//  Shadow Catcher Vertices (Floor)
 float catcherVertices[] = {
     // Pos                // Normal          // UV
     -15.0f, 0.0f, -15.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
@@ -292,7 +290,7 @@ void processNode(aiNode *node, const aiScene *scene)
             obj.currentAnimTime = 0.0f;
             obj.isOpen = false;
             found = true;
-            std::cout << "LINK OK: '" << obj.name << "' <-> Canale '" << chanName << "'" << std::endl;
+            std::cout << "LINK OK: '" << obj.name << "' <-> Channel '" << chanName << "'" << std::endl;
             break;
           }
         }
@@ -308,7 +306,7 @@ void processNode(aiNode *node, const aiScene *scene)
     processNode(node->mChildren[i], scene);
 }
 
-// --- FUNZIONI DI INTERPOLAZIONE ---
+// Interpolation functions
 unsigned int findPosition(float animationTime, const aiNodeAnim *pNodeAnim)
 {
   for (unsigned int i = 0; i < pNodeAnim->mNumPositionKeys - 1; i++)
@@ -472,7 +470,7 @@ int main(int argc, char *argv[])
   SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
   SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 
-  auto window = SDL_CreateWindow("PGR2025 - Interactive", 1024, 768, SDL_WINDOW_OPENGL);
+  auto window = SDL_CreateWindow("PGR2025 - Mustang", 1024, 768, SDL_WINDOW_OPENGL);
   auto context = SDL_GL_CreateContext(window);
 
   ge::gl::init(reinterpret_cast<ge::gl::GET_PROC_ADDRESS>(SDL_GL_GetProcAddress));
@@ -504,7 +502,7 @@ int main(int argc, char *argv[])
     }
   }
 
-  // --- SETUP FRAMEBUFFER PER OMBRE (SHADOW MAP) ---
+  // SHADOW MAP
   GLuint depthMapFBO;
   glGenFramebuffers(1, &depthMapFBO);
   GLuint depthMap;
@@ -523,9 +521,9 @@ int main(int argc, char *argv[])
   glReadBuffer(GL_NONE);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-  // --- SHADERS ---
+  // SHADERS
 
-  // 1. Depth Shader (per creare la shadow map)
+  // 1 Depth Shader
   auto depthVsSrc = R".(
   #version 410 core
   layout (location = 0) in vec3 position;
@@ -545,7 +543,7 @@ int main(int argc, char *argv[])
   auto d_lightSpaceMatrixL = glGetUniformLocation(depthProg, "lightSpaceMatrix");
   auto d_modelMatrixL = glGetUniformLocation(depthProg, "modelMatrix");
 
-  // 2. Main Shader (aggiornato per ombre e shadow catcher)
+  // 2 Main Shader
   auto vsSrc = R".(
   #version 410
   layout(location=0) in vec3 position;
@@ -579,21 +577,23 @@ int main(int argc, char *argv[])
 
   uniform sampler2D texSampler; 
   uniform samplerCube skybox;
-  uniform sampler2D shadowMap; // La texture delle ombre
+  uniform sampler2D shadowMap; 
 
   uniform int hasTexture; 
   uniform vec4 materialColor; 
   uniform float specularStrength; 
   uniform vec3 viewPos;
-  uniform int isShadowCatcher; // 1 = Pavimento Trasparente
+  uniform int isShadowCatcher; 
 
   float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
       vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
       projCoords = projCoords * 0.5 + 0.5;
+      
       if(projCoords.z > 1.0) return 0.0;
 
       float currentDepth = projCoords.z;
-      float bias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.0005);
+      
+      float bias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.001); 
       
       float shadow = 0.0;
       vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
@@ -614,13 +614,11 @@ int main(int argc, char *argv[])
 
       float shadow = ShadowCalculation(vFragPosLightSpace, N, L);
 
-      // --- SHADOW CATCHER ---
       if (isShadowCatcher == 1) {
-          fColor = vec4(0.0, 0.0, 0.0, shadow * 0.7); // Nero con alpha basato sull'ombra
+          fColor = vec4(0.0, 0.0, 0.0, shadow * 0.7); 
           return;
       }
 
-      // --- OGGETTO NORMALE ---
       vec4 baseColor = materialColor;
       if (hasTexture == 1) baseColor *= texture(texSampler, vTexCoord);
       
@@ -628,11 +626,10 @@ int main(int argc, char *argv[])
       vec3 R = reflect(-V, N);
       vec3 envColor = texture(skybox, R).rgb;
       
-      vec3 ambient = 0.3 * baseColor.rgb;
+      vec3 ambient = 0.25 * baseColor.rgb;
       float diff = max(dot(N, L), 0.0);
       vec3 diffuse = diff * baseColor.rgb;
       
-      // Applica ombra alla parte diffusa
       vec3 lighting = ambient + (1.0 - shadow) * diffuse;
       
       vec3 finalColor;
@@ -648,7 +645,7 @@ int main(int argc, char *argv[])
   }
   ).";
 
-  // 3. Skybox Shader (invariato)
+  // 3 Skybox Shader
   auto skyboxVsSrc = R".(
   #version 410
   layout (location = 0) in vec3 aPos;
@@ -671,17 +668,16 @@ int main(int argc, char *argv[])
   auto viewMatrixL = glGetUniformLocation(prg, "viewMatrix");
   auto projMatrixL = glGetUniformLocation(prg, "projMatrix");
   auto modelMatrixL = glGetUniformLocation(prg, "modelMatrix");
-  auto lightSpaceMatrixL = glGetUniformLocation(prg, "lightSpaceMatrix"); // Nuovo uniform
+  auto lightSpaceMatrixL = glGetUniformLocation(prg, "lightSpaceMatrix");
   auto texSamplerL = glGetUniformLocation(prg, "texSampler");
   auto hasTextureL = glGetUniformLocation(prg, "hasTexture");
   auto materialColorL = glGetUniformLocation(prg, "materialColor");
   auto specularStrengthL = glGetUniformLocation(prg, "specularStrength");
   auto viewPosL = glGetUniformLocation(prg, "viewPos");
   auto skyboxL = glGetUniformLocation(prg, "skybox");
-  auto shadowMapL = glGetUniformLocation(prg, "shadowMap");             // Nuovo uniform
-  auto isShadowCatcherL = glGetUniformLocation(prg, "isShadowCatcher"); // Nuovo uniform
+  auto shadowMapL = glGetUniformLocation(prg, "shadowMap");
+  auto isShadowCatcherL = glGetUniformLocation(prg, "isShadowCatcher");
 
-  // Setup Geometry Skybox
   GLuint skyboxVAO, skyboxVBO;
   glGenVertexArrays(1, &skyboxVAO);
   glBindVertexArray(skyboxVAO);
@@ -691,14 +687,13 @@ int main(int argc, char *argv[])
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
 
-  // Setup Geometry Shadow Catcher (Piano a terra)
   GLuint catcherVAO, catcherVBO;
   glGenVertexArrays(1, &catcherVAO);
   glBindVertexArray(catcherVAO);
   glGenBuffers(1, &catcherVBO);
   glBindBuffer(GL_ARRAY_BUFFER, catcherVBO);
   glBufferData(GL_ARRAY_BUFFER, sizeof(catcherVertices), &catcherVertices, GL_STATIC_DRAW);
-  // Usiamo lo stesso layout degli altri oggetti (Pos, Norm, UV) per compatibilità con shader
+
   int stride = 8 * sizeof(float);
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void *)0);
@@ -710,7 +705,7 @@ int main(int argc, char *argv[])
   std::vector<std::string> faces = {"../model/skybox/right.jpg", "../model/skybox/left.jpg", "../model/skybox/top.jpg", "../model/skybox/bottom.jpg", "../model/skybox/front.jpg", "../model/skybox/back.jpg"};
   GLuint cubemapTexture = loadCubemap(faces);
 
-  // Setup Camere
+  // Setup Orbit Camera
   auto orbitCamera = std::make_shared<basicCamera::OrbitCamera>();
   orbitCamera->setFocus(glm::vec3(0.0f, 0.5f, 0.0f));
   orbitCamera->setDistance(8.0f);
@@ -789,21 +784,21 @@ int main(int argc, char *argv[])
 
     updateObjectAnimations(deltaTime);
 
-    // --- RENDER LOOP ---
-
-    // 1. Calcola matrici Luce (Sole)
-    glm::vec3 lightPos(10.0f, 20.0f, 10.0f);
-    glm::mat4 lightProjection = glm::ortho(-15.0f, 15.0f, -15.0f, 15.0f, 1.0f, 50.0f);
+    glm::vec3 lightPos(20.0f, 35.0f, 20.0f);
+    glm::mat4 lightProjection = glm::ortho(-55.0f, 55.0f, -55.0f, 55.0f, 1.0f, 100.0f);
     glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
-    // --- PASS 1: Shadow Mapping (Disegna nel Framebuffer della profondità) ---
     glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
     glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
     glClear(GL_DEPTH_BUFFER_BIT);
     glUseProgram(depthProg);
     glUniformMatrix4fv(d_lightSpaceMatrixL, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
 
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+
+    glDisable(GL_CULL_FACE);
     for (auto &obj : carObjects)
     {
       glUniformMatrix4fv(d_modelMatrixL, 1, GL_FALSE, glm::value_ptr(obj.transform));
@@ -813,9 +808,11 @@ int main(int argc, char *argv[])
         glDrawElements(GL_TRIANGLES, part.indexCount, GL_UNSIGNED_INT, nullptr);
       }
     }
+
+    glCullFace(GL_BACK);
+    glDisable(GL_CULL_FACE);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-    // --- PASS 2: Render Finale (Disegna a schermo) ---
     int w, h;
     SDL_GetWindowSize(window, &w, &h);
     glViewport(0, 0, w, h);
@@ -826,13 +823,27 @@ int main(int argc, char *argv[])
     glm::mat4 projMatrix = perspective->getProjection();
     glm::vec3 camPos = glm::vec3(glm::inverse(viewMatrix)[3]);
 
+    //  SKYBOX
+    glDepthFunc(GL_LEQUAL);
+    glUseProgram(skyboxProgram);
+    glm::mat4 viewNoTrans = glm::mat4(glm::mat3(viewMatrix));
+    glUniformMatrix4fv(skyViewL, 1, GL_FALSE, glm::value_ptr(viewNoTrans));
+    glUniformMatrix4fv(skyProjL, 1, GL_FALSE, glm::value_ptr(projMatrix));
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+    glUniform1i(skyTexL, 0);
+    glBindVertexArray(skyboxVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    glBindVertexArray(0);
+    glDepthFunc(GL_LESS);
+
+    // SETUP Car
     glUseProgram(prg);
     glUniformMatrix4fv(viewMatrixL, 1, GL_FALSE, glm::value_ptr(viewMatrix));
     glUniformMatrix4fv(projMatrixL, 1, GL_FALSE, glm::value_ptr(projMatrix));
     glUniformMatrix4fv(lightSpaceMatrixL, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
     glUniform3fv(viewPosL, 1, glm::value_ptr(camPos));
 
-    // Texture Unit 1: Skybox, Unit 2: Shadow Map
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
     glUniform1i(skyboxL, 1);
@@ -840,52 +851,79 @@ int main(int argc, char *argv[])
     glBindTexture(GL_TEXTURE_2D, depthMap);
     glUniform1i(shadowMapL, 2);
 
-    // A. Disegna il SHADOW CATCHER (Pavimento)
-    glUniform1i(isShadowCatcherL, 1); // Attiva modalità catcher
+    glDisable(GL_CULL_FACE);
+
+    glUniform1i(isShadowCatcherL, 0);
+    glDisable(GL_BLEND);
+
+    for (auto &obj : carObjects)
+    {
+      glUniformMatrix4fv(modelMatrixL, 1, GL_FALSE, glm::value_ptr(obj.transform));
+      for (auto &part : obj.parts)
+      {
+        if (part.diffuseColor[3] > 0.95f)
+        {
+          glUniform4fv(materialColorL, 1, part.diffuseColor);
+          glUniform1f(specularStrengthL, part.specularStrength);
+          if (part.textureID != 0)
+          {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, part.textureID);
+            glUniform1i(texSamplerL, 0);
+            glUniform1i(hasTextureL, 1);
+          }
+          else
+          {
+            glUniform1i(hasTextureL, 0);
+          }
+          glBindVertexArray(part.vao);
+          glDrawElements(GL_TRIANGLES, part.indexCount, GL_UNSIGNED_INT, nullptr);
+        }
+      }
+    }
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glUniform1i(isShadowCatcherL, 1);
+
     glm::mat4 groundModel = glm::mat4(1.0f);
     groundModel = glm::scale(groundModel, glm::vec3(5.0f, 1.0f, 5.0f));
     glUniformMatrix4fv(modelMatrixL, 1, GL_FALSE, glm::value_ptr(groundModel));
     glBindVertexArray(catcherVAO);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // B. Disegna l'AUTO
-    glUniform1i(isShadowCatcherL, 0); // Disattiva modalità catcher
+    glUniform1i(isShadowCatcherL, 0);
+
     for (auto &obj : carObjects)
     {
       glUniformMatrix4fv(modelMatrixL, 1, GL_FALSE, glm::value_ptr(obj.transform));
       for (auto &part : obj.parts)
       {
-        glUniform4fv(materialColorL, 1, part.diffuseColor);
-        glUniform1f(specularStrengthL, part.specularStrength);
-        if (part.textureID != 0)
+        if (part.diffuseColor[3] <= 0.95f)
         {
-          glActiveTexture(GL_TEXTURE0);
-          glBindTexture(GL_TEXTURE_2D, part.textureID);
-          glUniform1i(texSamplerL, 0);
-          glUniform1i(hasTextureL, 1);
+          glUniform4fv(materialColorL, 1, part.diffuseColor);
+          glUniform1f(specularStrengthL, part.specularStrength);
+          if (part.textureID != 0)
+          {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, part.textureID);
+            glUniform1i(texSamplerL, 0);
+            glUniform1i(hasTextureL, 1);
+          }
+          else
+          {
+            glUniform1i(hasTextureL, 0);
+          }
+          glBindVertexArray(part.vao);
+          glDrawElements(GL_TRIANGLES, part.indexCount, GL_UNSIGNED_INT, nullptr);
         }
-        else
-        {
-          glUniform1i(hasTextureL, 0);
-        }
-        glBindVertexArray(part.vao);
-        glDrawElements(GL_TRIANGLES, part.indexCount, GL_UNSIGNED_INT, nullptr);
       }
     }
 
-    // C. Disegna Skybox
-    glDepthFunc(GL_LEQUAL);
-    glUseProgram(skyboxProgram);
-    glm::mat4 viewNoTrans = glm::mat4(glm::mat3(viewMatrix));
-    glUniformMatrix4fv(skyViewL, 1, GL_FALSE, glm::value_ptr(viewNoTrans));
-    glUniformMatrix4fv(skyProjL, 1, GL_FALSE, glm::value_ptr(projMatrix));
-    glBindVertexArray(skyboxVAO);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
-    glUniform1i(skyTexL, 0);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    glBindVertexArray(0);
-    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
 
     SDL_GL_SwapWindow(window);
   }
