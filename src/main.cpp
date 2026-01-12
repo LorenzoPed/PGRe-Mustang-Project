@@ -536,7 +536,7 @@ int main(int argc, char *argv[])
   auto depthFsSrc = R".(
   #version 410 core
   void main() {
-      // Non scriviamo colore, solo profondità
+      // Empty fragment shader since we only need depth
   }
   ).";
   auto depthProg = createProgram({createShader(GL_VERTEX_SHADER, depthVsSrc), createShader(GL_FRAGMENT_SHADER, depthFsSrc)});
